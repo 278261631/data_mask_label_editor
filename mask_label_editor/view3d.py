@@ -159,7 +159,7 @@ class Dual3DView(QWidget):
             r, g, b, _a = la.color_rgba
             # 如果是 code=0 且颜色太暗（灰/黑），替换为浅蓝色调
             if la.code == 0 and (r + g + b) < 400:
-                cmap[la.code] = (0.45, 0.65, 0.9)  # 浅蓝
+                cmap[la.code] = (0.55, 0.78, 1.0)  # 亮浅蓝
             else:
                 cmap[la.code] = (r / 255.0, g / 255.0, b / 255.0)
         return cmap
