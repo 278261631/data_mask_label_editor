@@ -159,7 +159,7 @@ class Dual3DView(QWidget):
             r, g, b, _a = la.color_rgba
             # 如果是 code=0 且颜色太暗（灰/黑），替换为浅蓝色调
             if la.code == 0 and (r + g + b) < 400:
-                cmap[la.code] = (0.55, 0.78, 1.0)  # 亮浅蓝
+                cmap[la.code] = (0.2, 0.4, 1.0)  # 蓝色
             else:
                 cmap[la.code] = (r / 255.0, g / 255.0, b / 255.0)
         return cmap
@@ -196,7 +196,7 @@ class Dual3DView(QWidget):
                 code = int(mask_patch[iy, ix])
                 hr, hg, hb = hue_map.get(code, default_hue)
                 bri = float(brightness[iy, ix])
-                fc[iy, ix] = (hr * bri, hg * bri, hb * bri, 0.9)
+                fc[iy, ix] = (hr * bri, hg * bri, hb * bri, 1.0)
         return fc
 
     def _plot_surface(self, ax, patch: np.ndarray, title: str, cx: int, cy: int,
