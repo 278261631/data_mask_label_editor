@@ -37,7 +37,7 @@ class TileGroup:
 
 
 def discover_tiles(data_dir: str | Path) -> list[TileGroup]:
-    """扫描目录（含子目录 tiles/），按 tile 编号分组。"""
+    """扫描目录（含子目录 tiles/），按 前缀+tile编号 分组。"""
     root = Path(data_dir)
     groups: dict[str, TileGroup] = {}
 
@@ -52,16 +52,22 @@ def discover_tiles(data_dir: str | Path) -> list[TileGroup]:
             if not f.is_file():
                 continue
             name_lower = f.name.lower()
-            # 提取 tile 编号：匹配 tile0001、tile_0001 等
-            m = re.search(r"(tile[_]?\d+)", name_lower)
+            # 提取 前缀 + tile 编号，例如:
+            #   GY3_K073-2_20250719_170125_-13._tile0001_1_reference.fits
+            #   前缀 = "gy3_k073-2_20250719_170125_-13._tile0001"
+            m = re.search(r"^(.+?tile[_]?\d+)", name_lower)
             if m is None:
                 continue
-            tile_id = m.group(1).replace("_", "")
+            # 用前缀+tile编号作为唯一分组 key
+            group_key = m.group(1)
+            # 提取纯 tile 编号用于显示
+            tm = re.search(r"(tile[_]?\d+)", group_key)
+            tile_id = tm.group(1).replace("_", "") if tm else group_key
 
-            if tile_id not in groups:
-                groups[tile_id] = TileGroup(tile_id=tile_id)
+            if group_key not in groups:
+                groups[group_key] = TileGroup(tile_id=tile_id)
 
-            g = groups[tile_id]
+            g = groups[group_key]
 
             if "_1_reference" in name_lower and name_lower.endswith((".fits", ".fit", ".fts")):
                 g.reference = f
@@ -70,8 +76,8 @@ def discover_tiles(data_dir: str | Path) -> list[TileGroup]:
             elif "_mask" in name_lower:
                 g.mask = f
 
-    # 设置 display_name
-    result = sorted(groups.values(), key=lambda g: g.tile_id)
+    # 设置 display_name 并排序
+    result = sorted(groups.values(), key=lambda g: (g.reference or g.aligned or g.mask or Path("")).name)
     for g in result:
         ref_name = g.reference.stem if g.reference else ""
         # 去掉 _1_reference 后缀作为显示名
