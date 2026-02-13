@@ -7,10 +7,13 @@ import matplotlib
 matplotlib.use("QtAgg")  # noqa: E402  must be before pyplot import
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.colors import ListedColormap, to_rgba
 from matplotlib.figure import Figure
 
 from PySide6.QtWidgets import QVBoxLayout, QWidget, QLabel, QHBoxLayout, QSpinBox
 from PySide6.QtCore import Qt
+
+from mask_label_editor.labels import Label
 
 
 class Dual3DView(QWidget):
@@ -22,6 +25,8 @@ class Dual3DView(QWidget):
         self._patch_size = 30  # 默认 30×30
         self._ref_data: np.ndarray | None = None   # 原始 16-bit 全图
         self._aligned_data: np.ndarray | None = None
+        self._mask_data: np.ndarray | None = None   # mask 全图 (int32)
+        self._labels: list[Label] = []
 
         # matplotlib figure —— 1 行 2 列子图
         self._fig = Figure(figsize=(10, 4), dpi=100, facecolor="#2b2b2b")
@@ -69,12 +74,28 @@ class Dual3DView(QWidget):
         self._ref_data = ref
         self._aligned_data = aligned
 
+    def set_mask(self, mask: np.ndarray | None) -> None:
+        """设置 mask 全图数据。"""
+        self._mask_data = mask
+
+    def set_labels(self, labels: list[Label]) -> None:
+        """设置标签列表（用于 mask 着色）。"""
+        self._labels = labels
+
     def get_patch_size(self) -> int:
         return self._patch_size
 
     def update_view(self, cx: int, cy: int) -> None:
         """以 (cx, cy) 为中心提取 patch 并绘制 3D surface。"""
         half = self._patch_size // 2
+
+        # 提取 mask patch 用于着色
+        mask_patch = None
+        if self._mask_data is not None:
+            mask_patch = self._extract_patch(self._mask_data, cx, cy, half)
+
+        # 构建 facecolors
+        facecolors = self._build_facecolors(mask_patch) if mask_patch is not None else None
 
         self._ax_ref.cla()
         self._ax_ali.cla()
@@ -83,7 +104,8 @@ class Dual3DView(QWidget):
         if self._ref_data is not None:
             patch_r = self._extract_patch(self._ref_data, cx, cy, half)
             if patch_r is not None:
-                self._plot_surface(self._ax_ref, patch_r, "Reference", cx, cy, cmap="coolwarm")
+                self._plot_surface(self._ax_ref, patch_r, "Reference", cx, cy,
+                                   facecolors=facecolors)
                 drawn = True
             else:
                 self._style_axes(self._ax_ref, "Reference (无数据)")
@@ -93,7 +115,8 @@ class Dual3DView(QWidget):
         if self._aligned_data is not None:
             patch_a = self._extract_patch(self._aligned_data, cx, cy, half)
             if patch_a is not None:
-                self._plot_surface(self._ax_ali, patch_a, "Aligned", cx, cy, cmap="coolwarm")
+                self._plot_surface(self._ax_ali, patch_a, "Aligned", cx, cy,
+                                   facecolors=facecolors)
                 drawn = True
             else:
                 self._style_axes(self._ax_ali, "Aligned (无数据)")
@@ -120,7 +143,6 @@ class Dual3DView(QWidget):
         x1 = cx + half
         y0 = cy - half
         y1 = cy + half
-        # 裁剪到图像范围
         x0c = max(0, x0)
         x1c = min(w, x1)
         y0c = max(0, y0)
@@ -129,19 +151,54 @@ class Dual3DView(QWidget):
             return None
         return data[y0c:y1c, x0c:x1c].astype(np.float64)
 
+    def _build_label_color_map(self) -> dict[int, tuple[float, float, float, float]]:
+        """从 labels 构建 code -> RGBA(0~1) 映射。"""
+        cmap: dict[int, tuple[float, float, float, float]] = {}
+        for la in self._labels:
+            r, g, b, a = la.color_rgba
+            cmap[la.code] = (r / 255.0, g / 255.0, b / 255.0, max(a / 255.0, 0.3))
+        return cmap
+
+    def _build_facecolors(self, mask_patch: np.ndarray) -> np.ndarray:
+        """
+        根据 mask patch 构建 facecolors 数组。
+        plot_surface 的 facecolors 尺寸是 (H-1, W-1, 4)，
+        每个 face 对应左上角像素的 mask code。
+        """
+        ph, pw = mask_patch.shape
+        color_map = self._build_label_color_map()
+
+        # 默认颜色：浅灰半透明
+        default_color = (0.6, 0.6, 0.6, 0.7)
+
+        # facecolors: (H-1, W-1, 4)
+        fh = max(ph - 1, 1)
+        fw = max(pw - 1, 1)
+        fc = np.zeros((fh, fw, 4), dtype=np.float64)
+        for iy in range(fh):
+            for ix in range(fw):
+                code = int(mask_patch[iy, ix])
+                rgba = color_map.get(code, default_color)
+                # code==0 (background/normal) 用较暗的灰色
+                if code == 0 and 0 not in color_map:
+                    rgba = (0.4, 0.4, 0.4, 0.5)
+                fc[iy, ix] = rgba
+        return fc
+
     def _plot_surface(self, ax, patch: np.ndarray, title: str, cx: int, cy: int,
-                      cmap: str = "coolwarm") -> None:
+                      facecolors: np.ndarray | None = None) -> None:
         ph, pw = patch.shape
         half = self._patch_size // 2
         X = np.arange(cx - half, cx - half + pw)
         Y = np.arange(cy - half, cy - half + ph)
         X, Y = np.meshgrid(X, Y)
 
-        vmin = np.nanmin(patch)
-        vmax = np.nanmax(patch)
-
-        ax.plot_surface(X, Y, patch, cmap=cmap, edgecolor="none", alpha=0.9,
-                        rstride=1, cstride=1, antialiased=False)
+        if facecolors is not None and facecolors.shape[0] == ph - 1 and facecolors.shape[1] == pw - 1:
+            ax.plot_surface(X, Y, patch, facecolors=facecolors, edgecolor="none",
+                            alpha=0.9, rstride=1, cstride=1, antialiased=False, shade=True)
+        else:
+            ax.plot_surface(X, Y, patch, cmap="coolwarm", edgecolor="none",
+                            alpha=0.9, rstride=1, cstride=1, antialiased=False)
 
         ax.set_title(title, color="white", fontsize=11, pad=2)
         ax.set_xlabel("X", color="#aaa", fontsize=8, labelpad=1)

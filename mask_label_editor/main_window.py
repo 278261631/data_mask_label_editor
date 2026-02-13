@@ -472,6 +472,7 @@ class MainWindow(QMainWindow):
             fi = read_fits_image(path)
             self._mask_header = fi.header
         self._canvas.load_mask(mask)
+        self._view3d.set_mask(mask)
         self._mask_path = path
         self._dirty = False
         self._status_file.setText(
@@ -484,6 +485,7 @@ class MainWindow(QMainWindow):
         labels = ensure_unique_codes(labels)
         self._labels = labels
         self._canvas.set_labels(labels)
+        self._view3d.set_labels(labels)
         self._rebuild_label_list()
         self._codebook_path = path
         self._cfg.last_codebook_path = str(path)
@@ -525,6 +527,7 @@ class MainWindow(QMainWindow):
                 h, w = fi.data.shape[:2]
                 empty_mask = np.zeros((h, w), dtype=np.int32)
                 self._canvas.load_mask(empty_mask)
+                self._view3d.set_mask(empty_mask)
                 self._dirty = False
                 self.statusBar().showMessage(f"已创建空白mask ({w}×{h})")
 
