@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QSlider,
     QSplitter,
+    QStackedWidget,
     QToolBar,
     QVBoxLayout,
     QWidget,
@@ -32,6 +33,7 @@ from mask_label_editor.fits_io import (
     write_mask_image,
 )
 from mask_label_editor.labels import Label, default_labels, ensure_unique_codes
+from mask_label_editor.view3d import Dual3DView
 
 
 class MainWindow(QMainWindow):
@@ -45,23 +47,35 @@ class MainWindow(QMainWindow):
         self._mask_path: Path | None = None
         self._codebook_path: Path | None = None
 
-        self._mask_header = None  # 保存 FITS mask 的 header
+        self._mask_header = None
+
+        # 原始 16-bit 全图数据（用于 3D 视图）
+        self._raw_ref: np.ndarray | None = None
+        self._raw_aligned: np.ndarray | None = None
 
         self._labels: list[Label] = default_labels(alpha=255)
+
+        # ---------- 当前模式 ----------
+        self._mode = "view3d"  # "view3d" | "edit_mask"
 
         # ---------- Canvas ----------
         self._canvas = MaskCanvas()
         self._canvas.set_overlay_opacity(cfg.overlay_alpha)
         self._canvas.set_brush_radius(cfg.brush_radius)
+        self._canvas.set_mode("view3d")
         self._canvas.mask_changed.connect(self._on_mask_changed)
         self._canvas.cursor_pixel.connect(self._on_cursor_pixel)
         self._canvas.color_picked.connect(self._on_color_picked)
+        self._canvas.view3d_click.connect(self._on_view3d_click)
 
         self._dirty = False
         self._blink_timer = QTimer(self)
         self._blink_timer.setInterval(500)
         self._blink_timer.timeout.connect(self._on_blink_tick)
         self._blinking = False
+
+        # ---------- 3D View ----------
+        self._view3d = Dual3DView()
 
         # ---------- File browser ----------
         self._file_browser = FileBrowser()
@@ -109,6 +123,9 @@ class MainWindow(QMainWindow):
         if cfg.last_codebook_path and Path(cfg.last_codebook_path).exists():
             self._load_codebook(Path(cfg.last_codebook_path))
 
+        # 初始模式 UI 状态
+        self._apply_mode_ui()
+
     # ================================================================
     #                           UI
     # ================================================================
@@ -127,6 +144,21 @@ class MainWindow(QMainWindow):
         act_refresh.setShortcut(QKeySequence("F5"))
         act_refresh.triggered.connect(self._refresh_file_list)
         tb.addAction(act_refresh)
+
+        tb.addSeparator()
+
+        # ---- 模式切换按钮 ----
+        self._act_mode_view3d = QAction("🔍 3D查看", self)
+        self._act_mode_view3d.setCheckable(True)
+        self._act_mode_view3d.setChecked(True)
+        self._act_mode_view3d.triggered.connect(lambda: self._switch_mode("view3d"))
+        tb.addAction(self._act_mode_view3d)
+
+        self._act_mode_edit = QAction("✏️ Mask编辑", self)
+        self._act_mode_edit.setCheckable(True)
+        self._act_mode_edit.setChecked(False)
+        self._act_mode_edit.triggered.connect(lambda: self._switch_mode("edit_mask"))
+        tb.addAction(self._act_mode_edit)
 
         tb.addSeparator()
 
@@ -162,13 +194,13 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         tb.addAction(self._eraser_toggle)
 
-        self._act_blink = QAction("👁 闪烁对比 (B)", self)
+        self._act_blink = QAction("👁 闪烁 (B)", self)
         self._act_blink.setCheckable(True)
         self._act_blink.setShortcut(QKeySequence("B"))
         self._act_blink.toggled.connect(self._toggle_blink)
         tb.addAction(self._act_blink)
 
-        act_toggle = QAction("⇆ 切换图像 (Tab)", self)
+        act_toggle = QAction("⇆ 切换 (Tab)", self)
         act_toggle.setShortcut(QKeySequence("Tab"))
         act_toggle.triggered.connect(self._toggle_image)
         tb.addAction(act_toggle)
@@ -182,11 +214,11 @@ class MainWindow(QMainWindow):
         self._image_name_label = QLabel("  显示: --")
         tb.addWidget(self._image_name_label)
 
-        # ---------- Right side panel ----------
-        side = QWidget()
-        side.setMinimumWidth(180)
-        side.setMaximumWidth(260)
-        side_layout = QVBoxLayout(side)
+        # ---------- Right side panel (edit mode) ----------
+        self._side_edit = QWidget()
+        self._side_edit.setMinimumWidth(180)
+        self._side_edit.setMaximumWidth(260)
+        side_layout = QVBoxLayout(self._side_edit)
         side_layout.setContentsMargins(6, 6, 6, 6)
 
         side_layout.addWidget(QLabel("标签 (数字键切换)"))
@@ -208,6 +240,7 @@ class MainWindow(QMainWindow):
             "  Shift+滚轮=笔刷大小\n"
             "  Tab=切换图像  B=闪烁对比\n"
             "  E=橡皮  F=适应窗口\n"
+            "  M=切换模式\n"
             "  1-9=选择标签  0=背景\n"
             "  PgUp/PgDn=上/下一张"
         )
@@ -215,22 +248,62 @@ class MainWindow(QMainWindow):
         help_text.setWordWrap(True)
         side_layout.addWidget(help_text)
 
-        # ---------- Layout with splitter ----------
+        # ---------- Right side panel (view3d mode): empty placeholder ----------
+        self._side_view3d = QWidget()
+        self._side_view3d.setMinimumWidth(180)
+        self._side_view3d.setMaximumWidth(260)
+        v3d_layout = QVBoxLayout(self._side_view3d)
+        v3d_layout.setContentsMargins(6, 6, 6, 6)
+        v3d_info = QLabel(
+            "3D 查看模式\n\n"
+            "左键点击图像查看局部\n"
+            "3D 像素分布\n\n"
+            "快捷键:\n"
+            "  中键=平移\n"
+            "  Ctrl+滚轮=缩放\n"
+            "  Tab=切换图像\n"
+            "  B=闪烁对比\n"
+            "  F=适应窗口\n"
+            "  M=切换到编辑模式\n"
+            "  PgUp/PgDn=上/下一张"
+        )
+        v3d_info.setStyleSheet("color: #aaa; font-size: 11px;")
+        v3d_info.setWordWrap(True)
+        v3d_layout.addWidget(v3d_info)
+        v3d_layout.addStretch(1)
+
+        # ---------- Stacked widget for right panel ----------
+        self._side_stack = QStackedWidget()
+        self._side_stack.addWidget(self._side_view3d)   # index 0
+        self._side_stack.addWidget(self._side_edit)      # index 1
+
+        # ---------- 中间区域: canvas 上面 + 3D 下面（用垂直 splitter） ----------
+        self._center_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._center_splitter.addWidget(self._canvas)
+        self._center_splitter.addWidget(self._view3d)
+        self._center_splitter.setStretchFactor(0, 2)
+        self._center_splitter.setStretchFactor(1, 1)
+        self._center_splitter.setSizes([500, 300])
+
+        # ---------- 顶层 splitter ----------
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._file_browser)
-        splitter.addWidget(self._canvas)
-        splitter.addWidget(side)
-        splitter.setStretchFactor(0, 0)  # file browser: fixed
-        splitter.setStretchFactor(1, 1)  # canvas: stretch
-        splitter.setStretchFactor(2, 0)  # side panel: fixed
-        splitter.setSizes([250, 700, 200])
+        splitter.addWidget(self._center_splitter)
+        splitter.addWidget(self._side_stack)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 0)
+        splitter.setSizes([250, 800, 200])
 
         self.setCentralWidget(splitter)
 
         # ---------- Status bar ----------
         self._status_coord = QLabel("x=-, y=-")
         self._status_code = QLabel("code=-")
+        self._status_mode = QLabel("[3D查看]")
+        self._status_mode.setStyleSheet("color: #4fc3f7; font-weight: bold;")
         self._status_file = QLabel("")
+        self.statusBar().addWidget(self._status_mode, 0)
         self.statusBar().addWidget(self._status_coord, 0)
         self.statusBar().addWidget(self._status_code, 0)
         self.statusBar().addPermanentWidget(self._status_file, 1)
@@ -255,9 +328,44 @@ class MainWindow(QMainWindow):
         sc_dec = QShortcut(QKeySequence("-"), self)
         sc_dec.activated.connect(lambda: self._adjust_brush(-2))
 
+        # M 键切换模式
+        sc_mode = QShortcut(QKeySequence("M"), self)
+        sc_mode.activated.connect(self._toggle_mode)
+
     def _adjust_brush(self, delta: int) -> None:
         new_r = max(1, min(100, self._brush_slider.value() + delta))
         self._brush_slider.setValue(new_r)
+
+    # ================================================================
+    #                    Mode switching
+    # ================================================================
+
+    def _switch_mode(self, mode: str) -> None:
+        self._mode = mode
+        self._canvas.set_mode(mode)
+        self._apply_mode_ui()
+
+    def _toggle_mode(self) -> None:
+        new_mode = "edit_mask" if self._mode == "view3d" else "view3d"
+        self._switch_mode(new_mode)
+
+    def _apply_mode_ui(self) -> None:
+        is_view3d = (self._mode == "view3d")
+
+        self._act_mode_view3d.setChecked(is_view3d)
+        self._act_mode_edit.setChecked(not is_view3d)
+
+        if is_view3d:
+            self._side_stack.setCurrentIndex(0)
+            self._view3d.setVisible(True)
+            self._status_mode.setText("[3D查看]")
+            self._status_mode.setStyleSheet("color: #4fc3f7; font-weight: bold;")
+        else:
+            self._side_stack.setCurrentIndex(1)
+            self._view3d.setVisible(False)
+            self._canvas.hide_region_rect()
+            self._status_mode.setText("[Mask编辑]")
+            self._status_mode.setStyleSheet("color: #ff9800; font-weight: bold;")
 
     # ================================================================
     #                    Dialogs / Actions
@@ -281,7 +389,6 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"数据目录: {self._cfg.data_dir}")
 
     def _try_auto_load_codebook(self) -> None:
-        """自动查找数据目录中的 mask_codebook.json。"""
         if not self._cfg.data_dir:
             return
         root = Path(self._cfg.data_dir)
@@ -339,27 +446,30 @@ class MainWindow(QMainWindow):
 
     def _load_reference(self, path: Path) -> None:
         img = read_fits_image(path)
+        self._raw_ref = np.squeeze(img.data).astype(np.float64)
         gray8 = to_uint8_view(img.data)
         self._canvas.load_base_gray8(gray8, slot="a")
         self._canvas.fit_view()
         self._ref_path = path
-        self._image_name_label.setText(f"  显示: reference")
+        self._image_name_label.setText("  显示: reference")
         self._status_file.setText(f"📷 {path.name}")
+        self._view3d.set_data(self._raw_ref, self._raw_aligned)
 
     def _load_aligned(self, path: Path) -> None:
         img = read_fits_image(path)
+        self._raw_aligned = np.squeeze(img.data).astype(np.float64)
         gray8 = to_uint8_view(img.data)
         self._canvas.load_base_gray8(gray8, slot="b")
         self._aligned_path = path
+        self._view3d.set_data(self._raw_ref, self._raw_aligned)
 
     def _load_mask(self, path: Path) -> None:
         if self._dirty and not self._confirm_discard():
             return
         mask = read_mask_image(path)
-        self._mask_header = None  # PNG 没有 FITS header
+        self._mask_header = None
         if path.suffix.lower() in {".fits", ".fit", ".fts"}:
-            from mask_label_editor.fits_io import read_fits_image as _rfi
-            fi = _rfi(path)
+            fi = read_fits_image(path)
             self._mask_header = fi.header
         self._canvas.load_mask(mask)
         self._mask_path = path
@@ -385,14 +495,12 @@ class MainWindow(QMainWindow):
         if mask is None:
             QMessageBox.warning(self, "无法保存", "当前没有mask数据。")
             return
-
         write_mask_image(path, mask, header=self._mask_header, overwrite=True)
         self._mask_path = path
         self._dirty = False
         self.statusBar().showMessage(f"✅ 已保存: {path.name}")
 
     def _on_tile_selected(self, tile: TileGroup) -> None:
-        """从文件列表选择一个 tile 时自动加载整组文件。"""
         if self._dirty and not self._confirm_discard():
             return
 
@@ -400,6 +508,8 @@ class MainWindow(QMainWindow):
         self._ref_path = None
         self._aligned_path = None
         self._mask_path = None
+        self._raw_ref = None
+        self._raw_aligned = None
         self._dirty = False
 
         if tile.reference:
@@ -410,18 +520,30 @@ class MainWindow(QMainWindow):
             self._load_mask(tile.mask)
 
         if not tile.has_mask:
-            # 没有现成 mask，创建空白 mask
             if tile.reference:
-                from mask_label_editor.fits_io import read_fits_image as _rfi
-                fi = _rfi(tile.reference)
+                fi = read_fits_image(tile.reference)
                 h, w = fi.data.shape[:2]
                 empty_mask = np.zeros((h, w), dtype=np.int32)
                 self._canvas.load_mask(empty_mask)
                 self._dirty = False
                 self.statusBar().showMessage(f"已创建空白mask ({w}×{h})")
 
-        self._image_name_label.setText(f"  显示: reference")
+        # 默认进入 3D 查看模式
+        self._switch_mode("view3d")
+
+        self._image_name_label.setText("  显示: reference")
         self.setWindowTitle(f"FITS Mask Label Editor - {tile.tile_id}")
+
+    # ================================================================
+    #                    3D View interaction
+    # ================================================================
+
+    def _on_view3d_click(self, x: int, y: int) -> None:
+        """3D 模式下点击图像时的处理。"""
+        patch_size = self._view3d.get_patch_size()
+        self._canvas.show_region_rect(x, y, patch_size)
+        self._view3d.update_view(x, y)
+        self.statusBar().showMessage(f"3D 查看: 中心({x}, {y})  {patch_size}×{patch_size} px")
 
     # ================================================================
     #                    Blink / Toggle
@@ -457,16 +579,27 @@ class MainWindow(QMainWindow):
 
     def _on_cursor_pixel(self, x: int, y: int, code: int) -> None:
         self._status_coord.setText(f"x={x}, y={y}")
-        # 找到对应的标签名
-        label_name = "?"
-        for la in self._labels:
-            if la.code == code:
-                label_name = la.name
-                break
-        self._status_code.setText(f"code={code} ({label_name})")
+        if code >= 0:
+            label_name = "?"
+            for la in self._labels:
+                if la.code == code:
+                    label_name = la.name
+                    break
+            self._status_code.setText(f"code={code} ({label_name})")
+        else:
+            # 3D 模式下可能没有 mask
+            # 显示原始像素值
+            val_str = ""
+            if self._raw_ref is not None and 0 <= y < self._raw_ref.shape[0] and 0 <= x < self._raw_ref.shape[1]:
+                val_str = f"ref={self._raw_ref[y, x]:.1f}"
+            if self._raw_aligned is not None and 0 <= y < self._raw_aligned.shape[0] and 0 <= x < self._raw_aligned.shape[1]:
+                if val_str:
+                    val_str += f"  ali={self._raw_aligned[y, x]:.1f}"
+                else:
+                    val_str = f"ali={self._raw_aligned[y, x]:.1f}"
+            self._status_code.setText(val_str if val_str else "")
 
     def _on_color_picked(self, code: int) -> None:
-        """右键取色：选择对应标签。"""
         for i, la in enumerate(self._labels):
             if la.code == code:
                 self._label_list.setCurrentRow(i)
@@ -479,7 +612,6 @@ class MainWindow(QMainWindow):
             return
         la = self._labels[idx]
         self._canvas.set_current_code(la.code)
-        # 切掉橡皮模式
         if self._eraser_toggle.isChecked():
             self._eraser_toggle.setChecked(False)
 
@@ -497,13 +629,10 @@ class MainWindow(QMainWindow):
         self._alpha_label.setText(f"透明度: {v}%")
 
     def _select_label_by_number(self, num: int) -> None:
-        """数字键 0-9 选择对应 code 的标签。"""
-        # 先尝试按 code 匹配
         for i, la in enumerate(self._labels):
             if la.code == num:
                 self._label_list.setCurrentRow(i)
                 return
-        # fallback: 按列表索引
         if num < len(self._labels):
             self._label_list.setCurrentRow(num)
 
@@ -516,7 +645,6 @@ class MainWindow(QMainWindow):
         self._label_list.clear()
         for la in self._labels:
             r, g, b, a = la.color_rgba
-            # 创建带颜色方块的 item
             pix = QPixmap(16, 16)
             pix.fill(QColor(r, g, b, a))
             icon = QIcon(pix)

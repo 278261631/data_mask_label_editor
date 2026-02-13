@@ -28,6 +28,7 @@ class MaskCanvas(QGraphicsView):
     mask_changed = Signal()
     cursor_pixel = Signal(int, int, int)  # x, y, code
     color_picked = Signal(int)  # code under cursor (right-click pick)
+    view3d_click = Signal(int, int)  # x, y — 3D查看模式下的点击坐标
 
     def __init__(self) -> None:
         super().__init__()
@@ -59,6 +60,16 @@ class MaskCanvas(QGraphicsView):
         self._cursor_circle.setVisible(False)
         self._scene.addItem(self._cursor_circle)
 
+        # 3D 查看区域高亮框
+        rect_pen = QPen(QColor(0, 255, 255, 200), 2.0)
+        rect_pen.setCosmetic(True)
+        self._region_rect = self._scene.addRect(QRectF(), rect_pen, Qt.BrushStyle.NoBrush)
+        self._region_rect.setZValue(99)
+        self._region_rect.setVisible(False)
+
+        # 交互模式: "view3d" | "edit_mask"
+        self._mode: str = "view3d"
+
         self._state = CanvasState()
 
         # 双图支持：两张底图，可切换
@@ -82,6 +93,27 @@ class MaskCanvas(QGraphicsView):
         self.on_info: Callable[[str], None] | None = None
 
     # -------------------- public API --------------------
+
+    def set_mode(self, mode: str) -> None:
+        """切换交互模式: 'view3d' 或 'edit_mask'。"""
+        self._mode = mode
+        if mode == "view3d":
+            self._cursor_circle.setVisible(False)
+            # mask overlay 保持显示，用于提示哪些区域需要查看
+        else:
+            self._region_rect.setVisible(False)
+
+    def get_mode(self) -> str:
+        return self._mode
+
+    def show_region_rect(self, cx: int, cy: int, size: int) -> None:
+        """在画布上显示 3D 查看区域的高亮框。"""
+        half = size // 2
+        self._region_rect.setRect(QRectF(cx - half, cy - half, size, size))
+        self._region_rect.setVisible(True)
+
+    def hide_region_rect(self) -> None:
+        self._region_rect.setVisible(False)
 
     def set_overlay_opacity(self, alpha01: float) -> None:
         self._overlay_item.setOpacity(float(np.clip(alpha01, 0.0, 1.0)))
@@ -296,6 +328,16 @@ class MaskCanvas(QGraphicsView):
             return
         super().wheelEvent(event)
 
+    def _pos_to_img_pixel(self, event) -> tuple[int, int] | None:
+        """从事件位置获取图像像素坐标（不依赖 mask 是否存在）。"""
+        sp = self.mapToScene(event.position().toPoint())
+        x = int(np.floor(sp.x()))
+        y = int(np.floor(sp.y()))
+        sr = self._scene.sceneRect()
+        if x < 0 or y < 0 or x >= sr.width() or y >= sr.height():
+            return None
+        return x, y
+
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.MiddleButton:
             # 中键平移
@@ -305,6 +347,18 @@ class MaskCanvas(QGraphicsView):
             event.accept()
             return
 
+        # ---------- view3d 模式 ----------
+        if self._mode == "view3d":
+            if event.button() == Qt.MouseButton.LeftButton:
+                pix = self._pos_to_img_pixel(event)
+                if pix:
+                    self.view3d_click.emit(pix[0], pix[1])
+                event.accept()
+                return
+            super().mousePressEvent(event)
+            return
+
+        # ---------- edit_mask 模式 ----------
         if event.button() == Qt.MouseButton.RightButton and self._mask is not None:
             # 右键取色
             sp = self.mapToScene(event.position().toPoint())
@@ -330,15 +384,24 @@ class MaskCanvas(QGraphicsView):
     def mouseMoveEvent(self, event) -> None:
         sp = self.mapToScene(event.position().toPoint())
 
-        # 更新笔刷光标位置
-        self._cursor_circle.setPos(sp)
-        self._cursor_circle.setVisible(True)
+        # 根据模式决定光标显示
+        if self._mode == "edit_mask":
+            self._cursor_circle.setPos(sp)
+            self._cursor_circle.setVisible(True)
+        else:
+            self._cursor_circle.setVisible(False)
 
+        # 发出坐标信号
         pix = self._scene_pos_to_pixel(sp)
         if pix and self._mask is not None:
             x, y = pix
             code = int(self._mask[y, x])
             self.cursor_pixel.emit(x, y, code)
+        elif self._mode == "view3d":
+            # view3d 模式下即使没有 mask 也发坐标
+            px = self._pos_to_img_pixel(event)
+            if px:
+                self.cursor_pixel.emit(px[0], px[1], -1)
 
         if self._panning:
             delta = event.position() - self._pan_start
@@ -365,11 +428,12 @@ class MaskCanvas(QGraphicsView):
             event.accept()
             return
 
-        if event.button() == Qt.MouseButton.LeftButton and self._painting:
-            self._painting = False
-            self.mask_changed.emit()
-            event.accept()
-            return
+        if self._mode == "edit_mask":
+            if event.button() == Qt.MouseButton.LeftButton and self._painting:
+                self._painting = False
+                self.mask_changed.emit()
+                event.accept()
+                return
         super().mouseReleaseEvent(event)
 
     def leaveEvent(self, event) -> None:
