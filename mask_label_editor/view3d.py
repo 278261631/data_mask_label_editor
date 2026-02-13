@@ -94,9 +94,6 @@ class Dual3DView(QWidget):
         if self._mask_data is not None:
             mask_patch = self._extract_patch(self._mask_data, cx, cy, half)
 
-        # 构建 facecolors
-        facecolors = self._build_facecolors(mask_patch) if mask_patch is not None else None
-
         self._ax_ref.cla()
         self._ax_ali.cla()
 
@@ -104,8 +101,9 @@ class Dual3DView(QWidget):
         if self._ref_data is not None:
             patch_r = self._extract_patch(self._ref_data, cx, cy, half)
             if patch_r is not None:
+                fc = self._build_facecolors(mask_patch, patch_r) if mask_patch is not None else None
                 self._plot_surface(self._ax_ref, patch_r, "Reference", cx, cy,
-                                   facecolors=facecolors)
+                                   facecolors=fc)
                 drawn = True
             else:
                 self._style_axes(self._ax_ref, "Reference (无数据)")
@@ -115,8 +113,9 @@ class Dual3DView(QWidget):
         if self._aligned_data is not None:
             patch_a = self._extract_patch(self._aligned_data, cx, cy, half)
             if patch_a is not None:
+                fc = self._build_facecolors(mask_patch, patch_a) if mask_patch is not None else None
                 self._plot_surface(self._ax_ali, patch_a, "Aligned", cx, cy,
-                                   facecolors=facecolors)
+                                   facecolors=fc)
                 drawn = True
             else:
                 self._style_axes(self._ax_ali, "Aligned (无数据)")
@@ -151,25 +150,42 @@ class Dual3DView(QWidget):
             return None
         return data[y0c:y1c, x0c:x1c].astype(np.float64)
 
-    def _build_label_color_map(self) -> dict[int, tuple[float, float, float, float]]:
-        """从 labels 构建 code -> RGBA(0~1) 映射。"""
-        cmap: dict[int, tuple[float, float, float, float]] = {}
+    def _build_label_hue_map(self) -> dict[int, tuple[float, float, float]]:
+        """从 labels 构建 code -> RGB(0~1) 色调映射。
+        code=0 (background/normal) 如果原色太暗，改用浅蓝色调以在暗背景上清晰可见。
+        """
+        cmap: dict[int, tuple[float, float, float]] = {}
         for la in self._labels:
-            r, g, b, a = la.color_rgba
-            cmap[la.code] = (r / 255.0, g / 255.0, b / 255.0, max(a / 255.0, 0.3))
+            r, g, b, _a = la.color_rgba
+            # 如果是 code=0 且颜色太暗（灰/黑），替换为浅蓝色调
+            if la.code == 0 and (r + g + b) < 400:
+                cmap[la.code] = (0.45, 0.65, 0.9)  # 浅蓝
+            else:
+                cmap[la.code] = (r / 255.0, g / 255.0, b / 255.0)
         return cmap
 
-    def _build_facecolors(self, mask_patch: np.ndarray) -> np.ndarray:
+    def _build_facecolors(self, mask_patch: np.ndarray, img_patch: np.ndarray) -> np.ndarray:
         """
-        根据 mask patch 构建 facecolors 数组。
-        plot_surface 的 facecolors 尺寸是 (H-1, W-1, 4)，
-        每个 face 对应左上角像素的 mask code。
+        根据 mask 色调 + 像素亮度 构建 facecolors。
+        - mask code 决定色调（红/绿/灰等）
+        - 像素值决定该色调的明暗变化
+        facecolors 尺寸是 (H-1, W-1, 4)。
         """
         ph, pw = mask_patch.shape
-        color_map = self._build_label_color_map()
+        hue_map = self._build_label_hue_map()
 
-        # 默认颜色：浅灰半透明
-        default_color = (0.6, 0.6, 0.6, 0.7)
+        # 默认色调（未定义的 code）：中灰
+        default_hue = (0.5, 0.5, 0.5)
+
+        # 将像素值归一化到 0~1 作为亮度因子
+        vmin = np.nanmin(img_patch)
+        vmax = np.nanmax(img_patch)
+        if vmax <= vmin:
+            vmax = vmin + 1.0
+        brightness = (img_patch - vmin) / (vmax - vmin)  # 0~1
+
+        # 将亮度映射到 0.25~1.0 范围，避免太暗看不清
+        brightness = 0.25 + brightness * 0.75
 
         # facecolors: (H-1, W-1, 4)
         fh = max(ph - 1, 1)
@@ -178,11 +194,9 @@ class Dual3DView(QWidget):
         for iy in range(fh):
             for ix in range(fw):
                 code = int(mask_patch[iy, ix])
-                rgba = color_map.get(code, default_color)
-                # code==0 (background/normal) 用较暗的灰色
-                if code == 0 and 0 not in color_map:
-                    rgba = (0.4, 0.4, 0.4, 0.5)
-                fc[iy, ix] = rgba
+                hr, hg, hb = hue_map.get(code, default_hue)
+                bri = float(brightness[iy, ix])
+                fc[iy, ix] = (hr * bri, hg * bri, hb * bri, 0.9)
         return fc
 
     def _plot_surface(self, ax, patch: np.ndarray, title: str, cx: int, cy: int,
