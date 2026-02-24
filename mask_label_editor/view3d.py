@@ -159,7 +159,7 @@ class Dual3DView(QWidget):
             r, g, b, _a = la.color_rgba
             # 如果是 code=0 且颜色太暗（灰/黑），替换为浅蓝色调
             if la.code == 0 and (r + g + b) < 400:
-                cmap[la.code] = (0.2, 0.4, 1.0)  # 蓝色
+                cmap[la.code] = (0.4, 0.8, 1.0)  # 蓝色
             else:
                 cmap[la.code] = (r / 255.0, g / 255.0, b / 255.0)
         return cmap
@@ -185,7 +185,7 @@ class Dual3DView(QWidget):
         brightness = (img_patch - vmin) / (vmax - vmin)  # 0~1
 
         # 将亮度映射到 0.25~1.0 范围，避免太暗看不清
-        brightness = 0.25 + brightness * 0.75
+        brightness = 0.5 + brightness * 0.5
 
         # facecolors: (H-1, W-1, 4)
         fh = max(ph - 1, 1)
@@ -209,10 +209,10 @@ class Dual3DView(QWidget):
 
         if facecolors is not None and facecolors.shape[0] == ph - 1 and facecolors.shape[1] == pw - 1:
             ax.plot_surface(X, Y, patch, facecolors=facecolors, edgecolor="none",
-                            alpha=0.9, rstride=1, cstride=1, antialiased=False, shade=True)
+                            alpha=1.0, rstride=1, cstride=1, antialiased=False, shade=True)
         else:
             ax.plot_surface(X, Y, patch, cmap="coolwarm", edgecolor="none",
-                            alpha=0.9, rstride=1, cstride=1, antialiased=False)
+                            alpha=1.0, rstride=1, cstride=1, antialiased=False)
 
         ax.set_title(title, color="white", fontsize=11, pad=2)
         ax.set_xlabel("X", color="#aaa", fontsize=8, labelpad=1)
