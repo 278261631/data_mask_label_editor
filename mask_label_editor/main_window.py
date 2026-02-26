@@ -613,10 +613,11 @@ class MainWindow(QMainWindow):
             self._load_reference(tile.reference)
         if tile.aligned:
             self._load_aligned(tile.aligned)
-        if tile.mask:
-            self._load_mask(tile.mask)
-        elif tile.prob_npz:
+        if tile.prob_npz:
+            # 有 prob 时默认进入 prob 视图
             self._load_prob_npz(tile.prob_npz)
+        elif tile.mask:
+            self._load_mask(tile.mask)
 
         if not tile.has_mask and tile.prob_npz is None:
             if tile.reference:
@@ -629,6 +630,17 @@ class MainWindow(QMainWindow):
 
         # 默认进入 3D 查看模式
         self._switch_mode("view3d")
+
+        # 默认叠加模式：
+        # - 有 prob.npz: Prob-Heatmap，类别优先 1（不足则回退 0）
+        # - 无 prob.npz: Mask
+        if tile.prob_npz is not None:
+            default_cls = 1 if self._prob_class_combo.count() > 1 else 0
+            if self._prob_class_combo.count() > 0:
+                self._prob_class_combo.setCurrentIndex(default_cls)
+            self._prob_mode_combo.setCurrentText("Prob-Heatmap")
+        else:
+            self._prob_mode_combo.setCurrentText("Mask")
 
         self._image_name_label.setText("  显示: reference")
         self.setWindowTitle(f"FITS Mask Label Editor - {tile.tile_id}")
