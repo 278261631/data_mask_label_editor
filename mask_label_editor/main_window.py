@@ -51,6 +51,7 @@ class MainWindow(QMainWindow):
         self._source_mask: np.ndarray | None = None
         self._source_prob: np.ndarray | None = None
         self._prob_display_mode: str = "mask"
+        self._suspend_dirty_tracking = False
 
         self._mask_header = None
 
@@ -496,17 +497,25 @@ class MainWindow(QMainWindow):
         self._aligned_path = path
         self._view3d.set_data(self._raw_ref, self._raw_aligned)
 
-    def _load_mask(self, path: Path) -> None:
-        if self._dirty and not self._confirm_discard():
+    def _set_canvas_mask_programmatically(self, mask: np.ndarray) -> None:
+        """加载/切换显示时更新画布，不把程序行为记为用户编辑。"""
+        self._suspend_dirty_tracking = True
+        try:
+            self._canvas.load_mask(mask)
+            self._view3d.set_mask(mask)
+        finally:
+            self._suspend_dirty_tracking = False
+
+    def _load_mask(self, path: Path, check_dirty: bool = True) -> None:
+        if check_dirty and self._dirty and not self._confirm_discard():
             return
         mask = read_mask_image(path)
         self._mask_header = None
         if path.suffix.lower() in {".fits", ".fit", ".fts"}:
             fi = read_fits_image(path)
             self._mask_header = fi.header
-        self._canvas.load_mask(mask)
+        self._set_canvas_mask_programmatically(mask)
         self._canvas.set_custom_overlay_argb(None)
-        self._view3d.set_mask(mask)
         self._mask_path = path
         self._prob_path = None
         self._source_mask = np.ascontiguousarray(mask.astype(np.int32, copy=False))
@@ -516,9 +525,9 @@ class MainWindow(QMainWindow):
         )
         self.statusBar().showMessage(f"已加载mask: {path.name}  ({mask.shape[1]}×{mask.shape[0]})")
 
-    def _load_prob_npz(self, path: Path) -> None:
+    def _load_prob_npz(self, path: Path, check_dirty: bool = True) -> None:
         """加载 prob.npz 并将概率张量转换为 argmax 标签图叠加显示。"""
-        if self._dirty and not self._confirm_discard():
+        if check_dirty and self._dirty and not self._confirm_discard():
             return
         with np.load(path, allow_pickle=False) as obj:
             keys = list(obj.files)
@@ -530,9 +539,8 @@ class MainWindow(QMainWindow):
 
         label_map = self._prob_to_label_map(arr)
         self._mask_header = None
-        self._canvas.load_mask(label_map)
+        self._set_canvas_mask_programmatically(label_map)
         self._canvas.set_custom_overlay_argb(None)
-        self._view3d.set_mask(label_map)
         self._mask_path = None
         self._prob_path = path
         self._source_prob = np.asarray(arr)
@@ -615,8 +623,7 @@ class MainWindow(QMainWindow):
                 fi = read_fits_image(tile.reference)
                 h, w = fi.data.shape[:2]
                 empty_mask = np.zeros((h, w), dtype=np.int32)
-                self._canvas.load_mask(empty_mask)
-                self._view3d.set_mask(empty_mask)
+                self._set_canvas_mask_programmatically(empty_mask)
                 self._dirty = False
                 self.statusBar().showMessage(f"已创建空白mask ({w}×{h})")
 
@@ -638,10 +645,14 @@ class MainWindow(QMainWindow):
             return
 
         if self._prob_path is not None:
-            self._load_mask(tile.mask)
+            self._load_mask(tile.mask, check_dirty=False)
             self._prob_mode_combo.setCurrentText("Mask")
         else:
-            self._load_prob_npz(tile.prob_npz)
+            # 切到 prob 前保留当前未保存绘制，便于切回继续编辑
+            cur = self._canvas.get_mask()
+            if cur is not None:
+                self._source_mask = cur
+            self._load_prob_npz(tile.prob_npz, check_dirty=False)
             self._prob_mode_combo.setCurrentText("Prob-Argmax")
 
     def _on_prob_mode_changed(self, text: str) -> None:
@@ -675,13 +686,13 @@ class MainWindow(QMainWindow):
 
         if mode == "mask":
             if self._source_mask is not None:
-                self._canvas.load_mask(self._source_mask)
+                self._set_canvas_mask_programmatically(self._source_mask)
             self._canvas.set_custom_overlay_argb(None)
             return
 
         if self._source_prob is None:
             if self._source_mask is not None:
-                self._canvas.load_mask(self._source_mask)
+                self._set_canvas_mask_programmatically(self._source_mask)
             self._canvas.set_custom_overlay_argb(None)
             return
 
@@ -692,7 +703,7 @@ class MainWindow(QMainWindow):
         if mode == "argmax":
             label_map = np.argmax(prob3d, axis=0).astype(np.int32, copy=False)
             self._source_mask = np.ascontiguousarray(label_map)
-            self._canvas.load_mask(self._source_mask)
+            self._set_canvas_mask_programmatically(self._source_mask)
             self._canvas.set_custom_overlay_argb(None)
             return
 
@@ -701,7 +712,7 @@ class MainWindow(QMainWindow):
             overlay = self._make_heatmap_argb(conf)
             label_map = np.argmax(prob3d, axis=0).astype(np.int32, copy=False)
             self._source_mask = np.ascontiguousarray(label_map)
-            self._canvas.load_mask(self._source_mask)
+            self._set_canvas_mask_programmatically(self._source_mask)
             self._canvas.set_custom_overlay_argb(overlay)
             return
 
@@ -713,7 +724,7 @@ class MainWindow(QMainWindow):
         overlay = self._make_heatmap_argb(hm)
         label_map = np.argmax(prob3d, axis=0).astype(np.int32, copy=False)
         self._source_mask = np.ascontiguousarray(label_map)
-        self._canvas.load_mask(self._source_mask)
+        self._set_canvas_mask_programmatically(self._source_mask)
         self._canvas.set_custom_overlay_argb(overlay)
 
     @staticmethod
@@ -808,7 +819,12 @@ class MainWindow(QMainWindow):
     # ================================================================
 
     def _on_mask_changed(self) -> None:
+        if self._suspend_dirty_tracking:
+            return
         self._dirty = True
+        cur = self._canvas.get_mask()
+        if cur is not None:
+            self._source_mask = cur
 
     def _on_cursor_pixel(self, x: int, y: int, code: int) -> None:
         self._status_coord.setText(f"x={x}, y={y}")
