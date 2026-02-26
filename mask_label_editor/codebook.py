@@ -69,7 +69,7 @@ def _load_json(p: Path, alpha: int) -> list[Label]:
 
     # 为没有颜色信息的 codebook 分配可区分颜色
     _auto_palette = [
-        "#444444",  # 0: normal/background - 深灰
+        "#442044",  # 0: normal/background - 
         "#34c759",  # 1: good - 绿色
         "#ff3b30",  # 2: bad - 红色
         "#0a84ff",  # 3: 蓝
@@ -96,8 +96,8 @@ def _load_json(p: Path, alpha: int) -> list[Label]:
                 color = _auto_palette[code]
             else:
                 color = _hsv_to_rgb_hex((code * 47 % 360) / 360.0, 0.9, 0.95)
-        # code=0 (background/normal) 默认透明，不遮挡底图
-        default_a = 0 if code == 0 else alpha
+        # code=0 使用其他类别一半透明度
+        default_a = max(1, int(alpha) // 2) if code == 0 else alpha
         a = int(item.get("alpha", default_a))
         out.append(make_label(code, name, color, alpha=a))
     out = ensure_unique_codes(out)

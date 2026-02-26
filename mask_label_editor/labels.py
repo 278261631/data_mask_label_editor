@@ -36,7 +36,7 @@ def make_label(code: int, name: str, color: str | tuple[int, int, int], alpha: i
 def default_labels(alpha: int = 128) -> list[Label]:
     # 基础调色板：背景 + 若干可区分颜色
     palette = [
-        ("background", "#000000"),
+        ("background", "#808080"),
         ("class1", "#ff3b30"),
         ("class2", "#34c759"),
         ("class3", "#0a84ff"),
@@ -47,8 +47,8 @@ def default_labels(alpha: int = 128) -> list[Label]:
     ]
     out: list[Label] = []
     for i, (name, color) in enumerate(palette):
-        # 背景 (code=0) 默认透明
-        a = 0 if i == 0 else alpha
+        # code=0 使用其他类别一半透明度
+        a = max(1, int(alpha) // 2) if i == 0 else alpha
         out.append(make_label(i, name, color, alpha=a))
     return out
 

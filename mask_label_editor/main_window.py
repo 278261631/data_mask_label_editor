@@ -45,6 +45,7 @@ class MainWindow(QMainWindow):
         self._ref_path: Path | None = None
         self._aligned_path: Path | None = None
         self._mask_path: Path | None = None
+        self._prob_path: Path | None = None
         self._codebook_path: Path | None = None
 
         self._mask_header = None
@@ -474,11 +475,55 @@ class MainWindow(QMainWindow):
         self._canvas.load_mask(mask)
         self._view3d.set_mask(mask)
         self._mask_path = path
+        self._prob_path = None
         self._dirty = False
         self._status_file.setText(
             f"📷 {self._ref_path.name if self._ref_path else '--'} | 🎭 {path.name}"
         )
         self.statusBar().showMessage(f"已加载mask: {path.name}  ({mask.shape[1]}×{mask.shape[0]})")
+
+    def _load_prob_npz(self, path: Path) -> None:
+        """加载 prob.npz 并将概率张量转换为 argmax 标签图叠加显示。"""
+        if self._dirty and not self._confirm_discard():
+            return
+        with np.load(path, allow_pickle=False) as obj:
+            keys = list(obj.files)
+            if not keys:
+                raise ValueError(f"prob.npz 不包含数组: {path}")
+            preferred = ("prob", "probs", "pred", "arr_0")
+            key = next((k for k in preferred if k in obj.files), keys[0])
+            arr = np.asarray(obj[key])
+
+        label_map = self._prob_to_label_map(arr)
+        self._mask_header = None
+        self._canvas.load_mask(label_map)
+        self._view3d.set_mask(label_map)
+        self._mask_path = None
+        self._prob_path = path
+        self._dirty = False
+        self._status_file.setText(
+            f"📷 {self._ref_path.name if self._ref_path else '--'} | 📈 {path.name}"
+        )
+        h, w = label_map.shape
+        self.statusBar().showMessage(f"已加载prob(argmax): {path.name}  ({w}×{h})")
+
+    @staticmethod
+    def _prob_to_label_map(prob: np.ndarray) -> np.ndarray:
+        """将 prob 数组转换为 HxW 的 int32 标签图。"""
+        arr = np.asarray(prob)
+        arr = np.squeeze(arr)
+        if arr.ndim == 2:
+            # 若已经是 2D，则视作 label map 或单通道概率图（四舍五入到整数）
+            if np.issubdtype(arr.dtype, np.integer):
+                return np.ascontiguousarray(arr.astype(np.int32, copy=False))
+            return np.ascontiguousarray(np.rint(arr).astype(np.int32, copy=False))
+        if arr.ndim != 3:
+            raise ValueError(f"不支持的 prob 维度: {arr.shape}")
+
+        # 估计通道维：优先取最小维作为类别通道（通常类别数远小于 H/W）
+        ch_axis = int(np.argmin(arr.shape))
+        label_map = np.argmax(arr, axis=ch_axis)
+        return np.ascontiguousarray(label_map.astype(np.int32, copy=False))
 
     def _load_codebook(self, path: Path) -> None:
         labels = load_codebook(path, alpha=255)
@@ -510,6 +555,7 @@ class MainWindow(QMainWindow):
         self._ref_path = None
         self._aligned_path = None
         self._mask_path = None
+        self._prob_path = None
         self._raw_ref = None
         self._raw_aligned = None
         self._dirty = False
@@ -520,8 +566,10 @@ class MainWindow(QMainWindow):
             self._load_aligned(tile.aligned)
         if tile.mask:
             self._load_mask(tile.mask)
+        elif tile.prob_npz:
+            self._load_prob_npz(tile.prob_npz)
 
-        if not tile.has_mask:
+        if not tile.has_mask and tile.prob_npz is None:
             if tile.reference:
                 fi = read_fits_image(tile.reference)
                 h, w = fi.data.shape[:2]
