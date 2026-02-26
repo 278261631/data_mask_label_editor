@@ -78,6 +78,7 @@ class MaskCanvas(QGraphicsView):
         self._showing_b: bool = False  # 当前显示哪张
 
         self._overlay_argb: np.ndarray | None = None  # hold buffer
+        self._custom_overlay_argb: np.ndarray | None = None
 
         self._mask: np.ndarray | None = None  # int32
         self._lut: np.ndarray | None = None  # uint32 LUT
@@ -193,6 +194,19 @@ class MaskCanvas(QGraphicsView):
         self._undo_stack.clear()
         self.mask_changed.emit()
 
+    def set_custom_overlay_argb(self, argb: np.ndarray | None) -> None:
+        """设置/清除自定义叠加层（0xAARRGGBB）。"""
+        if argb is None:
+            self._custom_overlay_argb = None
+            self._refresh_overlay(full=True)
+            return
+        arr = np.asarray(argb)
+        if arr.ndim != 2:
+            raise ValueError("custom overlay must be HxW uint32 argb")
+        self._custom_overlay_argb = np.ascontiguousarray(arr.astype(np.uint32, copy=False))
+        qimg = argb32_to_qimage(self._custom_overlay_argb)
+        self._overlay_item.setPixmap(QPixmap.fromImage(qimg))
+
     def get_mask(self) -> np.ndarray | None:
         return None if self._mask is None else self._mask.copy()
 
@@ -213,6 +227,7 @@ class MaskCanvas(QGraphicsView):
         self._showing_b = False
         self._mask = None
         self._overlay_argb = None
+        self._custom_overlay_argb = None
         self._undo_stack.clear()
         self._base_item.setPixmap(QPixmap())
         self._overlay_item.setPixmap(QPixmap())
@@ -246,6 +261,10 @@ class MaskCanvas(QGraphicsView):
 
     def _refresh_overlay(self, full: bool = False, roi: tuple[int, int, int, int] | None = None) -> None:
         if self._mask is None or self._lut is None:
+            return
+        if self._custom_overlay_argb is not None:
+            qimg = argb32_to_qimage(self._custom_overlay_argb)
+            self._overlay_item.setPixmap(QPixmap.fromImage(qimg))
             return
         self._ensure_overlay_buffer()
         assert self._overlay_argb is not None

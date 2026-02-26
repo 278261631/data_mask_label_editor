@@ -48,6 +48,9 @@ class MainWindow(QMainWindow):
         self._prob_path: Path | None = None
         self._codebook_path: Path | None = None
         self._current_tile: TileGroup | None = None
+        self._source_mask: np.ndarray | None = None
+        self._source_prob: np.ndarray | None = None
+        self._prob_display_mode: str = "mask"
 
         self._mask_header = None
 
@@ -102,6 +105,17 @@ class MainWindow(QMainWindow):
         self._alpha_slider.setValue(int(cfg.overlay_alpha * 100))
         self._alpha_slider.valueChanged.connect(self._on_alpha_changed)
         self._alpha_label = QLabel(f"透明度: {int(cfg.overlay_alpha * 100)}%")
+
+        # ---------- Prob overlay mode ----------
+        self._prob_mode_label = QLabel("叠加:")
+        self._prob_mode_combo = QComboBox()
+        self._prob_mode_combo.addItems(["Mask", "Prob-Argmax", "Prob-Heatmap", "Confidence"])
+        self._prob_mode_combo.currentTextChanged.connect(self._on_prob_mode_changed)
+
+        self._prob_class_label = QLabel("类别:")
+        self._prob_class_combo = QComboBox()
+        self._prob_class_combo.currentIndexChanged.connect(self._on_prob_class_changed)
+        self._prob_class_combo.setEnabled(False)
 
         # ---------- Eraser toggle ----------
         self._eraser_toggle = QAction("橡皮 (E)", self)
@@ -206,6 +220,12 @@ class MainWindow(QMainWindow):
         act_toggle_mask_prob.setShortcut(QKeySequence("P"))
         act_toggle_mask_prob.triggered.connect(self._toggle_mask_prob)
         tb.addAction(act_toggle_mask_prob)
+
+        tb.addSeparator()
+        tb.addWidget(self._prob_mode_label)
+        tb.addWidget(self._prob_mode_combo)
+        tb.addWidget(self._prob_class_label)
+        tb.addWidget(self._prob_class_combo)
 
         act_toggle = QAction("⇆ 切换 (Tab)", self)
         act_toggle.setShortcut(QKeySequence("Tab"))
@@ -485,9 +505,11 @@ class MainWindow(QMainWindow):
             fi = read_fits_image(path)
             self._mask_header = fi.header
         self._canvas.load_mask(mask)
+        self._canvas.set_custom_overlay_argb(None)
         self._view3d.set_mask(mask)
         self._mask_path = path
         self._prob_path = None
+        self._source_mask = np.ascontiguousarray(mask.astype(np.int32, copy=False))
         self._dirty = False
         self._status_file.setText(
             f"📷 {self._ref_path.name if self._ref_path else '--'} | 🎭 {path.name}"
@@ -509,9 +531,13 @@ class MainWindow(QMainWindow):
         label_map = self._prob_to_label_map(arr)
         self._mask_header = None
         self._canvas.load_mask(label_map)
+        self._canvas.set_custom_overlay_argb(None)
         self._view3d.set_mask(label_map)
         self._mask_path = None
         self._prob_path = path
+        self._source_prob = np.asarray(arr)
+        self._source_mask = np.ascontiguousarray(label_map.astype(np.int32, copy=False))
+        self._refresh_prob_class_combo()
         self._dirty = False
         self._status_file.setText(
             f"📷 {self._ref_path.name if self._ref_path else '--'} | 📈 {path.name}"
@@ -569,6 +595,8 @@ class MainWindow(QMainWindow):
         self._aligned_path = None
         self._mask_path = None
         self._prob_path = None
+        self._source_mask = None
+        self._source_prob = None
         self._raw_ref = None
         self._raw_aligned = None
         self._dirty = False
@@ -597,6 +625,7 @@ class MainWindow(QMainWindow):
 
         self._image_name_label.setText("  显示: reference")
         self.setWindowTitle(f"FITS Mask Label Editor - {tile.tile_id}")
+        self._apply_prob_display_mode()
 
     def _toggle_mask_prob(self) -> None:
         """在当前 tile 的 mask 与 prob(argmax) 之间切换显示。"""
@@ -610,8 +639,133 @@ class MainWindow(QMainWindow):
 
         if self._prob_path is not None:
             self._load_mask(tile.mask)
+            self._prob_mode_combo.setCurrentText("Mask")
         else:
             self._load_prob_npz(tile.prob_npz)
+            self._prob_mode_combo.setCurrentText("Prob-Argmax")
+
+    def _on_prob_mode_changed(self, text: str) -> None:
+        mode_map = {
+            "Mask": "mask",
+            "Prob-Argmax": "argmax",
+            "Prob-Heatmap": "heatmap",
+            "Confidence": "confidence",
+        }
+        self._prob_display_mode = mode_map.get(text, "mask")
+        self._apply_prob_display_mode()
+
+    def _on_prob_class_changed(self, _: int) -> None:
+        if self._prob_display_mode == "heatmap":
+            self._apply_prob_display_mode()
+
+    def _refresh_prob_class_combo(self) -> None:
+        self._prob_class_combo.blockSignals(True)
+        self._prob_class_combo.clear()
+        c = self._prob_channel_count(self._source_prob)
+        if c <= 0:
+            self._prob_class_combo.addItem("0")
+        else:
+            for i in range(c):
+                self._prob_class_combo.addItem(str(i))
+        self._prob_class_combo.blockSignals(False)
+
+    def _apply_prob_display_mode(self) -> None:
+        mode = self._prob_display_mode
+        self._prob_class_combo.setEnabled(mode == "heatmap")
+
+        if mode == "mask":
+            if self._source_mask is not None:
+                self._canvas.load_mask(self._source_mask)
+            self._canvas.set_custom_overlay_argb(None)
+            return
+
+        if self._source_prob is None:
+            if self._source_mask is not None:
+                self._canvas.load_mask(self._source_mask)
+            self._canvas.set_custom_overlay_argb(None)
+            return
+
+        prob3d = self._normalize_prob3d(self._source_prob)
+        if prob3d is None:
+            return
+
+        if mode == "argmax":
+            label_map = np.argmax(prob3d, axis=0).astype(np.int32, copy=False)
+            self._source_mask = np.ascontiguousarray(label_map)
+            self._canvas.load_mask(self._source_mask)
+            self._canvas.set_custom_overlay_argb(None)
+            return
+
+        if mode == "confidence":
+            conf = np.max(prob3d, axis=0)
+            overlay = self._make_heatmap_argb(conf)
+            label_map = np.argmax(prob3d, axis=0).astype(np.int32, copy=False)
+            self._source_mask = np.ascontiguousarray(label_map)
+            self._canvas.load_mask(self._source_mask)
+            self._canvas.set_custom_overlay_argb(overlay)
+            return
+
+        ch_count = prob3d.shape[0]
+        idx = self._prob_class_combo.currentIndex()
+        if idx < 0 or idx >= ch_count:
+            idx = 0
+        hm = prob3d[idx]
+        overlay = self._make_heatmap_argb(hm)
+        label_map = np.argmax(prob3d, axis=0).astype(np.int32, copy=False)
+        self._source_mask = np.ascontiguousarray(label_map)
+        self._canvas.load_mask(self._source_mask)
+        self._canvas.set_custom_overlay_argb(overlay)
+
+    @staticmethod
+    def _prob_channel_count(prob: np.ndarray | None) -> int:
+        if prob is None:
+            return 0
+        p = np.asarray(prob)
+        p = np.squeeze(p)
+        if p.ndim == 3:
+            return int(np.min(p.shape))
+        return 0
+
+    @staticmethod
+    def _normalize_prob3d(prob: np.ndarray) -> np.ndarray | None:
+        arr = np.asarray(prob)
+        arr = np.squeeze(arr)
+        if arr.ndim == 2:
+            return np.ascontiguousarray(arr.astype(np.float32, copy=False)[None, ...])
+        if arr.ndim != 3:
+            return None
+        ch_axis = int(np.argmin(arr.shape))
+        if ch_axis == 0:
+            out = arr
+        elif ch_axis == 1:
+            out = np.transpose(arr, (1, 0, 2))
+        else:
+            out = np.transpose(arr, (2, 0, 1))
+        return np.ascontiguousarray(out.astype(np.float32, copy=False))
+
+    @staticmethod
+    def _make_heatmap_argb(v: np.ndarray) -> np.ndarray:
+        x = np.asarray(v, dtype=np.float32)
+        if x.size == 0:
+            return np.zeros((0, 0), dtype=np.uint32)
+        lo = float(np.nanmin(x))
+        hi = float(np.nanmax(x))
+        if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+            x = np.zeros_like(x, dtype=np.float32)
+        else:
+            x = (x - lo) / (hi - lo)
+            x = np.clip(x, 0.0, 1.0)
+
+        r = np.clip(2.0 * x - 0.5, 0.0, 1.0)
+        g = np.clip(2.0 * x, 0.0, 1.0) * np.clip(2.0 - 2.0 * x, 0.0, 1.0)
+        b = np.clip(1.5 - 2.0 * x, 0.0, 1.0)
+        a = np.full_like(x, 0.75, dtype=np.float32)
+
+        rr = (r * 255.0).astype(np.uint32)
+        gg = (g * 255.0).astype(np.uint32)
+        bb = (b * 255.0).astype(np.uint32)
+        aa = (a * 255.0).astype(np.uint32)
+        return (aa << 24) | (rr << 16) | (gg << 8) | bb
 
     # ================================================================
     #                    3D View interaction
