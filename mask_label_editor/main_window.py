@@ -47,6 +47,7 @@ class MainWindow(QMainWindow):
         self._mask_path: Path | None = None
         self._prob_path: Path | None = None
         self._codebook_path: Path | None = None
+        self._current_tile: TileGroup | None = None
 
         self._mask_header = None
 
@@ -201,6 +202,11 @@ class MainWindow(QMainWindow):
         self._act_blink.toggled.connect(self._toggle_blink)
         tb.addAction(self._act_blink)
 
+        act_toggle_mask_prob = QAction("🎭⇆📈 切换Mask/Prob (P)", self)
+        act_toggle_mask_prob.setShortcut(QKeySequence("P"))
+        act_toggle_mask_prob.triggered.connect(self._toggle_mask_prob)
+        tb.addAction(act_toggle_mask_prob)
+
         act_toggle = QAction("⇆ 切换 (Tab)", self)
         act_toggle.setShortcut(QKeySequence("Tab"))
         act_toggle.triggered.connect(self._toggle_image)
@@ -240,6 +246,7 @@ class MainWindow(QMainWindow):
             "  右键=取色  Ctrl+滚轮=缩放\n"
             "  Shift+滚轮=笔刷大小\n"
             "  Tab=切换图像  B=闪烁对比\n"
+            "  P=切换Mask/Prob\n"
             "  E=橡皮  F=适应窗口\n"
             "  M=切换模式\n"
             "  1-9=选择标签  0=背景\n"
@@ -264,6 +271,7 @@ class MainWindow(QMainWindow):
             "  Ctrl+滚轮=缩放\n"
             "  Tab=切换图像\n"
             "  B=闪烁对比\n"
+            "  P=切换Mask/Prob\n"
             "  F=适应窗口\n"
             "  M=切换到编辑模式\n"
             "  PgUp/PgDn=上/下一张"
@@ -332,6 +340,10 @@ class MainWindow(QMainWindow):
         # M 键切换模式
         sc_mode = QShortcut(QKeySequence("M"), self)
         sc_mode.activated.connect(self._toggle_mode)
+
+        # P 键切换 Mask / Prob 叠加
+        sc_prob = QShortcut(QKeySequence("P"), self)
+        sc_prob.activated.connect(self._toggle_mask_prob)
 
     def _adjust_brush(self, delta: int) -> None:
         new_r = max(1, min(100, self._brush_slider.value() + delta))
@@ -551,6 +563,7 @@ class MainWindow(QMainWindow):
         if self._dirty and not self._confirm_discard():
             return
 
+        self._current_tile = tile
         self._canvas.clear_all()
         self._ref_path = None
         self._aligned_path = None
@@ -584,6 +597,21 @@ class MainWindow(QMainWindow):
 
         self._image_name_label.setText("  显示: reference")
         self.setWindowTitle(f"FITS Mask Label Editor - {tile.tile_id}")
+
+    def _toggle_mask_prob(self) -> None:
+        """在当前 tile 的 mask 与 prob(argmax) 之间切换显示。"""
+        tile = self._current_tile
+        if tile is None:
+            self.statusBar().showMessage("请先选择一个 tile")
+            return
+        if tile.mask is None or tile.prob_npz is None:
+            self.statusBar().showMessage("当前 tile 需要同时存在 mask 和 prob.npz 才能切换")
+            return
+
+        if self._prob_path is not None:
+            self._load_mask(tile.mask)
+        else:
+            self._load_prob_npz(tile.prob_npz)
 
     # ================================================================
     #                    3D View interaction
