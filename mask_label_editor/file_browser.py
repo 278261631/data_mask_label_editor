@@ -3,8 +3,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
-
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -25,7 +23,13 @@ class TileGroup:
     reference: Path | None = None
     aligned: Path | None = None
     mask: Path | None = None
+    pred_png: Path | None = None
+    pred_mask: Path | None = None
+    prob_png: Path | None = None
+    prob_npz: Path | None = None
     display_name: str = ""
+    predict_display: str = "-"
+    data_kind: str = "data"
 
     @property
     def has_pair(self) -> bool:
@@ -35,13 +39,33 @@ class TileGroup:
     def has_mask(self) -> bool:
         return self.mask is not None
 
+    @property
+    def has_pred_png(self) -> bool:
+        return self.pred_png is not None
+
+    @property
+    def has_pred_mask(self) -> bool:
+        return self.pred_mask is not None
+
+    @property
+    def has_prob_npz(self) -> bool:
+        return self.prob_npz is not None
+
+    @property
+    def has_prob_png(self) -> bool:
+        return self.prob_png is not None
+
+    @property
+    def is_predict(self) -> bool:
+        return self.pred_png is not None or self.prob_png is not None or self.prob_npz is not None
+
 
 def discover_tiles(data_dir: str | Path) -> list[TileGroup]:
-    """扫描目录（含子目录 tiles/），按 前缀+tile编号 分组。"""
+    """扫描单一数据目录，按文件存在情况判定 data 或 predict。"""
     root = Path(data_dir)
     groups: dict[str, TileGroup] = {}
 
-    # 扫描所有 fits 和 png 文件
+    # 扫描 data_dir（含 tiles 子目录）中的 reference/aligned/mask
     search_dirs = [root]
     tiles_dir = root / "tiles"
     if tiles_dir.is_dir():
@@ -73,15 +97,28 @@ def discover_tiles(data_dir: str | Path) -> list[TileGroup]:
                 g.reference = f
             elif "_2_aligned" in name_lower and name_lower.endswith((".fits", ".fit", ".fts")):
                 g.aligned = f
-            elif "_mask" in name_lower:
+            elif "_mask" in name_lower and not name_lower.endswith((".npz", ".npy")):
                 g.mask = f
+            elif name_lower.endswith("_pred.png"):
+                g.pred_png = f
+            elif name_lower.endswith("_prob.png"):
+                g.prob_png = f
+            elif name_lower.endswith("_prob.npz"):
+                g.prob_npz = f
 
     # 设置 display_name 并排序
-    result = sorted(groups.values(), key=lambda g: (g.reference or g.aligned or g.mask or Path("")).name)
+    result = sorted(
+        groups.values(),
+        key=lambda g: (g.reference or g.aligned or g.mask or g.pred_png or g.prob_npz or Path("")).name,
+    )
     for g in result:
         ref_name = g.reference.stem if g.reference else ""
+        if not ref_name and g.pred_png:
+            ref_name = g.pred_png.stem
         # 去掉 _1_reference 后缀作为显示名
         display = re.sub(r"_1_reference$", "", ref_name, flags=re.IGNORECASE)
+        display = re.sub(r"_pred$", "", display, flags=re.IGNORECASE)
+        display = re.sub(r"_prob$", "", display, flags=re.IGNORECASE)
         if not display:
             display = g.tile_id
         status_parts = []
@@ -91,7 +128,22 @@ def discover_tiles(data_dir: str | Path) -> list[TileGroup]:
             status_parts.append("A")
         if g.mask:
             status_parts.append("M")
-        g.display_name = f"{display} [{'/'.join(status_parts)}]"
+        pred_parts = []
+        if g.pred_png:
+            pred_parts.append("pred.png")
+        if g.pred_mask:
+            pred_parts.append("mask")
+        if g.prob_png:
+            pred_parts.append("prob.png")
+        if g.prob_npz:
+            pred_parts.append("prob.npz")
+        base_state = "/".join(status_parts) if status_parts else "-"
+        g.predict_display = "/".join(pred_parts) if pred_parts else "-"
+        g.data_kind = "predict" if g.is_predict else "data"
+        if g.data_kind == "predict":
+            g.display_name = f"{display} [predict]"
+        else:
+            g.display_name = f"{display} [{base_state}]"
 
     return result
 
@@ -110,6 +162,9 @@ class FileBrowser(QWidget):
         self._dir_label = QLabel("未设置数据目录")
         self._dir_label.setWordWrap(True)
         self._dir_label.setStyleSheet("color: #888; font-size: 11px;")
+        self._pred_info_label = QLabel("数据类型: - | 预测文件: -")
+        self._pred_info_label.setWordWrap(True)
+        self._pred_info_label.setStyleSheet("color: #666; font-size: 11px;")
 
         self._list = QListWidget()
         self._list.currentRowChanged.connect(self._on_row_changed)
@@ -128,6 +183,7 @@ class FileBrowser(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.addWidget(QLabel("Tile 列表"))
         layout.addWidget(self._dir_label)
+        layout.addWidget(self._pred_info_label)
         layout.addWidget(self._list, 1)
         layout.addLayout(nav)
 
@@ -150,6 +206,7 @@ class FileBrowser(QWidget):
             self._list.addItem(item)
         self._list.blockSignals(False)
         self._current_idx = -1
+        self._pred_info_label.setText("数据类型: - | 预测文件: -")
 
     def select_index(self, idx: int) -> None:
         if 0 <= idx < len(self._tiles):
@@ -172,4 +229,6 @@ class FileBrowser(QWidget):
         if row < 0 or row >= len(self._tiles):
             return
         self._current_idx = row
-        self.tile_selected.emit(self._tiles[row])
+        tile = self._tiles[row]
+        self._pred_info_label.setText(f"数据类型: {tile.data_kind} | 预测文件: {tile.predict_display}")
+        self.tile_selected.emit(tile)
