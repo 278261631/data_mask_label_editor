@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QKeySequence, QPixmap, QIcon, QShortcut
+from PySide6.QtGui import QAction, QColor, QKeySequence, QPixmap, QIcon, QShortcut, QPainter, QLinearGradient
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -117,6 +117,25 @@ class MainWindow(QMainWindow):
         self._prob_class_combo = QComboBox()
         self._prob_class_combo.currentIndexChanged.connect(self._on_prob_class_changed)
         self._prob_class_combo.setEnabled(False)
+        self._prob_legend_title = QLabel("颜色条(置信度)")
+        self._prob_legend_title.setStyleSheet("color: #9aa0a6; font-size: 11px;")
+        self._prob_legend_bar = QLabel()
+        self._prob_legend_bar.setPixmap(self._make_prob_legend_pixmap())
+        self._prob_legend_ticks = QLabel("0.0      0.5      1.0")
+        self._prob_legend_ticks.setStyleSheet("color: #9aa0a6; font-size: 10px;")
+        self._prob_legend_title.setVisible(False)
+        self._prob_legend_bar.setVisible(False)
+        self._prob_legend_ticks.setVisible(False)
+
+        self._prob_legend_title_v3d = QLabel("颜色条(置信度)")
+        self._prob_legend_title_v3d.setStyleSheet("color: #9aa0a6; font-size: 11px;")
+        self._prob_legend_bar_v3d = QLabel()
+        self._prob_legend_bar_v3d.setPixmap(self._make_prob_legend_pixmap())
+        self._prob_legend_ticks_v3d = QLabel("0.0      0.5      1.0")
+        self._prob_legend_ticks_v3d.setStyleSheet("color: #9aa0a6; font-size: 10px;")
+        self._prob_legend_title_v3d.setVisible(False)
+        self._prob_legend_bar_v3d.setVisible(False)
+        self._prob_legend_ticks_v3d.setVisible(False)
 
         # ---------- Eraser toggle ----------
         self._eraser_toggle = QAction("橡皮 (E)", self)
@@ -259,6 +278,10 @@ class MainWindow(QMainWindow):
         side_layout.addSpacing(6)
         side_layout.addWidget(self._alpha_label)
         side_layout.addWidget(self._alpha_slider)
+        side_layout.addSpacing(6)
+        side_layout.addWidget(self._prob_legend_title)
+        side_layout.addWidget(self._prob_legend_bar)
+        side_layout.addWidget(self._prob_legend_ticks)
 
         # ---------- Help text ----------
         help_text = QLabel(
@@ -300,6 +323,9 @@ class MainWindow(QMainWindow):
         v3d_info.setStyleSheet("color: #aaa; font-size: 11px;")
         v3d_info.setWordWrap(True)
         v3d_layout.addWidget(v3d_info)
+        v3d_layout.addWidget(self._prob_legend_title_v3d)
+        v3d_layout.addWidget(self._prob_legend_bar_v3d)
+        v3d_layout.addWidget(self._prob_legend_ticks_v3d)
         v3d_layout.addStretch(1)
 
         # ---------- Stacked widget for right panel ----------
@@ -695,6 +721,13 @@ class MainWindow(QMainWindow):
     def _apply_prob_display_mode(self) -> None:
         mode = self._prob_display_mode
         self._prob_class_combo.setEnabled(mode == "heatmap")
+        show_legend = mode in {"heatmap", "confidence"}
+        self._prob_legend_title.setVisible(show_legend)
+        self._prob_legend_bar.setVisible(show_legend)
+        self._prob_legend_ticks.setVisible(show_legend)
+        self._prob_legend_title_v3d.setVisible(show_legend)
+        self._prob_legend_bar_v3d.setVisible(show_legend)
+        self._prob_legend_ticks_v3d.setVisible(show_legend)
 
         if mode == "mask":
             if self._source_mask is not None:
@@ -771,13 +804,8 @@ class MainWindow(QMainWindow):
         x = np.asarray(v, dtype=np.float32)
         if x.size == 0:
             return np.zeros((0, 0), dtype=np.uint32)
-        lo = float(np.nanmin(x))
-        hi = float(np.nanmax(x))
-        if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
-            x = np.zeros_like(x, dtype=np.float32)
-        else:
-            x = (x - lo) / (hi - lo)
-            x = np.clip(x, 0.0, 1.0)
+        # 固定概率范围，不做每图拉伸：直接按 0~1 映射颜色
+        x = np.clip(x, 0.0, 1.0)
 
         r = np.clip(2.0 * x - 0.5, 0.0, 1.0)
         g = np.clip(2.0 * x, 0.0, 1.0) * np.clip(2.0 - 2.0 * x, 0.0, 1.0)
@@ -789,6 +817,20 @@ class MainWindow(QMainWindow):
         bb = (b * 255.0).astype(np.uint32)
         aa = (a * 255.0).astype(np.uint32)
         return (aa << 24) | (rr << 16) | (gg << 8) | bb
+
+    @staticmethod
+    def _make_prob_legend_pixmap(width: int = 150, height: int = 14) -> QPixmap:
+        pix = QPixmap(width, height)
+        pix.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pix)
+        grad = QLinearGradient(0, 0, width, 0)
+        grad.setColorAt(0.00, QColor(0, 0, 255))      # 0.0
+        grad.setColorAt(0.33, QColor(0, 255, 255))    # 0.33
+        grad.setColorAt(0.66, QColor(255, 255, 0))    # 0.66
+        grad.setColorAt(1.00, QColor(255, 0, 0))      # 1.0
+        painter.fillRect(0, 0, width, height, grad)
+        painter.end()
+        return pix
 
     # ================================================================
     #                    3D View interaction
