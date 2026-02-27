@@ -213,7 +213,16 @@ def estimate_background_wavelet(data: np.ndarray, base_sigma: float = 8.0, level
     for i in range(lv):
         s = sigma * (2 ** i)
         kernel = Gaussian2DKernel(s)
-        cur = np.asarray(convolve_fft(cur, kernel, normalize_kernel=True, boundary="extend"), dtype=np.float64)
+        cur = np.asarray(
+            convolve_fft(
+                cur,
+                kernel,
+                normalize_kernel=True,
+                boundary="fill",
+                fill_value=float(np.median(cur)),
+            ),
+            dtype=np.float64,
+        )
     return cur
 
 
@@ -279,7 +288,13 @@ def process_robust_pipeline(
     else:
         sigma_dn = max(0.5, float(denoise_sigma))
     den = np.asarray(
-        convolve_fft(resid, Gaussian2DKernel(sigma_dn), normalize_kernel=True, boundary="extend"),
+        convolve_fft(
+            resid,
+            Gaussian2DKernel(sigma_dn),
+            normalize_kernel=True,
+            boundary="fill",
+            fill_value=float(np.median(resid)),
+        ),
         dtype=np.float64,
     )
     # 保留细节：与原残差按比例融合
