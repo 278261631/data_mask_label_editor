@@ -18,6 +18,14 @@ def _config_path() -> Path:
 @dataclass
 class AppConfig:
     data_dir: str = DEFAULT_DATA_DIR
+    patch_size: int = 30
+
+    def __post_init__(self) -> None:
+        try:
+            v = int(self.patch_size)
+        except Exception:
+            v = 30
+        self.patch_size = max(10, min(100, v))
 
     @classmethod
     def load(cls) -> "AppConfig":

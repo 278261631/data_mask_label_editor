@@ -38,6 +38,8 @@ class MainWindow(QMainWindow):
         self._canvas.view3d_click.connect(self._on_view3d_click)
 
         self._view3d = Dual3DView()
+        self._view3d.patch_size_changed.connect(self._on_patch_size_changed)
+        self._view3d.set_patch_size(self._cfg.patch_size)
 
         self._file_browser = FileBrowser()
         self._file_browser.tile_selected.connect(self._on_tile_selected)
@@ -117,6 +119,10 @@ class MainWindow(QMainWindow):
         if self._cfg.data_dir:
             self._file_browser.set_data_dir(self._cfg.data_dir)
             self.statusBar().showMessage("已刷新文件列表")
+
+    def _on_patch_size_changed(self, size: int) -> None:
+        self._cfg.patch_size = int(size)
+        self._cfg.save()
 
     def _load_reference(self, path: Path) -> None:
         img = read_fits_image(path)

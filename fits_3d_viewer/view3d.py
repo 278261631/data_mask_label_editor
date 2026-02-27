@@ -10,10 +10,11 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 from PySide6.QtWidgets import QVBoxLayout, QWidget, QLabel, QHBoxLayout, QSpinBox
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 
 class Dual3DView(QWidget):
     """显示 reference 的局部 3D surface plot。"""
+    patch_size_changed = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -70,6 +71,15 @@ class Dual3DView(QWidget):
     def get_patch_size(self) -> int:
         return self._patch_size
 
+    def set_patch_size(self, val: int) -> None:
+        v = max(10, min(100, int(val)))
+        if v == self._patch_size:
+            return
+        self._patch_size = v
+        self._size_spin.blockSignals(True)
+        self._size_spin.setValue(v)
+        self._size_spin.blockSignals(False)
+
     def update_view(self, cx: int, cy: int) -> None:
         """以 (cx, cy) 为中心提取 patch 并绘制 3D surface。"""
         half = self._patch_size // 2
@@ -111,6 +121,7 @@ class Dual3DView(QWidget):
 
     def _on_size_changed(self, val: int) -> None:
         self._patch_size = val
+        self.patch_size_changed.emit(self._patch_size)
 
     def _extract_patch(self, data: np.ndarray, cx: int, cy: int, half: int) -> np.ndarray | None:
         h, w = data.shape[:2]
