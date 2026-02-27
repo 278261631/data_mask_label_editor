@@ -61,95 +61,78 @@ class TileGroup:
 
 
 def discover_tiles(data_dir: str | Path) -> list[TileGroup]:
-    """扫描单一数据目录，按文件存在情况判定 data 或 predict。"""
+    """扫描目录并按“单个 FITS 文件”返回条目。"""
     root = Path(data_dir)
-    groups: dict[str, TileGroup] = {}
-
-    # 扫描 data_dir（含 tiles 子目录）中的 reference/aligned/mask
+    result: list[TileGroup] = []
     search_dirs = [root]
     tiles_dir = root / "tiles"
     if tiles_dir.is_dir():
         search_dirs.append(tiles_dir)
+
+    fit_exts = (".fits", ".fit", ".fts")
+    image_exts = (".fits", ".fit", ".fts", ".png", ".bmp", ".tif", ".tiff")
+
+    def _find_existing(candidates: list[Path]) -> Path | None:
+        for p in candidates:
+            if p.exists() and p.is_file():
+                return p
+        return None
+
+    def _prefix(stem: str) -> str:
+        # 兼容原命名：xxx_1_reference / xxx_2_aligned
+        return re.sub(r"_(1_reference|2_aligned)$", "", stem, flags=re.IGNORECASE)
 
     for d in search_dirs:
         for f in sorted(d.iterdir()):
             if not f.is_file():
                 continue
             name_lower = f.name.lower()
-            # 提取 前缀 + tile 编号，例如:
-            #   GY3_K073-2_20250719_170125_-13._tile0001_1_reference.fits
-            #   前缀 = "gy3_k073-2_20250719_170125_-13._tile0001"
-            m = re.search(r"^(.+?tile[_]?\d+)", name_lower)
-            if m is None:
+            if not name_lower.endswith(fit_exts):
                 continue
-            # 用前缀+tile编号作为唯一分组 key
-            group_key = m.group(1)
-            # 提取纯 tile 编号用于显示
-            tm = re.search(r"(tile[_]?\d+)", group_key)
-            tile_id = tm.group(1).replace("_", "") if tm else group_key
 
-            if group_key not in groups:
-                groups[group_key] = TileGroup(tile_id=tile_id)
+            # 列表只显示图像 FITS，避免把 mask/prob 文件本身作为主图条目
+            if "_mask" in name_lower or "_prob" in name_lower:
+                continue
 
-            g = groups[group_key]
+            stem = f.stem
+            prefix = _prefix(stem)
+            g = TileGroup(tile_id=stem, reference=f)
 
-            if "_1_reference" in name_lower and name_lower.endswith((".fits", ".fit", ".fts")):
-                g.reference = f
-            elif "_2_aligned" in name_lower and name_lower.endswith((".fits", ".fit", ".fts")):
-                g.aligned = f
-            elif "_mask" in name_lower and not name_lower.endswith((".npz", ".npy")):
-                g.mask = f
-            elif name_lower.endswith("_pred.png"):
-                g.pred_png = f
-            elif name_lower.endswith("_prob.png"):
-                g.prob_png = f
-            elif name_lower.endswith("_prob.npz"):
-                g.prob_npz = f
+            if "_1_reference" in name_lower:
+                ali_candidates = [f.with_name(f"{prefix}_2_aligned{ext}") for ext in fit_exts]
+                g.aligned = _find_existing(ali_candidates)
 
-    # 设置 display_name 并排序
-    result = sorted(
-        groups.values(),
-        key=lambda g: (g.reference or g.aligned or g.mask or g.pred_png or g.prob_npz or Path("")).name,
-    )
-    for g in result:
-        ref_name = g.reference.stem if g.reference else ""
-        if not ref_name and g.pred_png:
-            ref_name = g.pred_png.stem
-        # 去掉 _1_reference 后缀作为显示名
-        display = re.sub(r"_1_reference$", "", ref_name, flags=re.IGNORECASE)
-        display = re.sub(r"_pred$", "", display, flags=re.IGNORECASE)
-        display = re.sub(r"_prob$", "", display, flags=re.IGNORECASE)
-        if not display:
-            display = g.tile_id
-        status_parts = []
-        if g.reference:
-            status_parts.append("R")
-        if g.aligned:
-            status_parts.append("A")
-        if g.mask:
-            status_parts.append("M")
-        pred_parts = []
-        if g.pred_png:
-            pred_parts.append("pred.png")
-        if g.pred_mask:
-            pred_parts.append("mask")
-        if g.prob_png:
-            pred_parts.append("prob.png")
-        if g.prob_npz:
-            pred_parts.append("prob.npz")
-        base_state = "/".join(status_parts) if status_parts else "-"
-        g.predict_display = "/".join(pred_parts) if pred_parts else "-"
-        g.data_kind = "predict" if g.is_predict else "data"
-        if g.data_kind == "predict":
-            g.display_name = f"{display} [predict]"
-        else:
-            g.display_name = f"{display} [{base_state}]"
+            mask_candidates = [f.with_name(f"{prefix}_mask{ext}") for ext in image_exts]
+            g.mask = _find_existing(mask_candidates)
 
-    return result
+            g.pred_png = _find_existing([f.with_name(f"{prefix}_pred.png")])
+            g.prob_png = _find_existing([f.with_name(f"{prefix}_prob.png")])
+            g.prob_npz = _find_existing([f.with_name(f"{prefix}_prob.npz")])
+
+            status_parts = ["F"]
+            if g.aligned:
+                status_parts.append("A")
+            if g.mask:
+                status_parts.append("M")
+
+            pred_parts = []
+            if g.pred_png:
+                pred_parts.append("pred.png")
+            if g.prob_png:
+                pred_parts.append("prob.png")
+            if g.prob_npz:
+                pred_parts.append("prob.npz")
+
+            g.predict_display = "/".join(pred_parts) if pred_parts else "-"
+            g.data_kind = "predict" if g.is_predict else "data"
+            g.display_name = f"{f.name} [{'/' .join(status_parts)}]"
+            result.append(g)
+
+    return sorted(result, key=lambda x: (x.reference or Path("")).name.lower())
 
 
 class FileBrowser(QWidget):
-    """文件浏览面板：显示数据目录中的 tile 列表。"""
+    """文件浏览面板：显示数据目录中的单文件 FITS 列表。"""
 
     tile_selected = Signal(object)  # emits TileGroup
 
@@ -181,7 +164,7 @@ class FileBrowser(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
-        layout.addWidget(QLabel("Tile 列表"))
+        layout.addWidget(QLabel("文件列表"))
         layout.addWidget(self._dir_label)
         layout.addWidget(self._pred_info_label)
         layout.addWidget(self._list, 1)
@@ -206,7 +189,7 @@ class FileBrowser(QWidget):
             self._list.addItem(item)
         self._list.blockSignals(False)
         self._current_idx = -1
-        self._pred_info_label.setText("数据类型: - | 预测文件: -")
+        self._pred_info_label.setText("文件类型: - | 预测文件: -")
 
     def select_index(self, idx: int) -> None:
         if 0 <= idx < len(self._tiles):
@@ -230,5 +213,5 @@ class FileBrowser(QWidget):
             return
         self._current_idx = row
         tile = self._tiles[row]
-        self._pred_info_label.setText(f"数据类型: {tile.data_kind} | 预测文件: {tile.predict_display}")
+        self._pred_info_label.setText(f"文件类型: {tile.data_kind} | 预测文件: {tile.predict_display}")
         self.tile_selected.emit(tile)

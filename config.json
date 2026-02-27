@@ -1,8 +1,8 @@
 {
-  "data_dir": "D:\\github\\SiameseNetwork_fits_diff\\data",
+  "data_dir": "D:\\github\\test_img",
   "last_image_path": "",
   "last_mask_path": "",
-  "last_codebook_path": "D:\\github\\SiameseNetwork_fits_diff\\data\\mask_codebook.json",
-  "overlay_alpha": 0.53,
-  "brush_radius": 1
+  "last_codebook_path": "",
+  "overlay_alpha": 0.5,
+  "brush_radius": 8
 }

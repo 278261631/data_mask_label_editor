@@ -1,4 +1,4 @@
-"""局部 3D 像素视图：并排显示 reference 和 aligned 两张图的 3D surface。"""
+"""局部 3D 像素视图：仅显示 reference 图的 3D surface。"""
 from __future__ import annotations
 
 import numpy as np
@@ -7,7 +7,6 @@ import matplotlib
 matplotlib.use("QtAgg")  # noqa: E402  must be before pyplot import
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.colors import ListedColormap, to_rgba
 from matplotlib.figure import Figure
 
 from PySide6.QtWidgets import QVBoxLayout, QWidget, QLabel, QHBoxLayout, QSpinBox
@@ -17,22 +16,20 @@ from mask_label_editor.labels import Label
 
 
 class Dual3DView(QWidget):
-    """并排显示 reference / aligned 的局部 3D surface plot。"""
+    """显示 reference 的局部 3D surface plot。"""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
         self._patch_size = 30  # 默认 30×30
         self._ref_data: np.ndarray | None = None   # 原始 16-bit 全图
-        self._aligned_data: np.ndarray | None = None
         self._mask_data: np.ndarray | None = None   # mask 全图 (int32)
         self._labels: list[Label] = []
 
-        # matplotlib figure —— 1 行 2 列子图
+        # matplotlib figure —— 单子图
         self._fig = Figure(figsize=(10, 4), dpi=100, facecolor="#2b2b2b")
-        self._ax_ref = self._fig.add_subplot(1, 2, 1, projection="3d", facecolor="#1e1e1e")
-        self._ax_ali = self._fig.add_subplot(1, 2, 2, projection="3d", facecolor="#1e1e1e")
-        self._fig.subplots_adjust(left=0.02, right=0.98, bottom=0.02, top=0.92, wspace=0.15)
+        self._ax_ref = self._fig.add_subplot(1, 1, 1, projection="3d", facecolor="#1e1e1e")
+        self._fig.subplots_adjust(left=0.04, right=0.98, bottom=0.02, top=0.92, wspace=0.15)
 
         self._mpl_canvas = FigureCanvas(self._fig)
         self._mpl_canvas.setMinimumHeight(300)
@@ -62,17 +59,15 @@ class Dual3DView(QWidget):
         layout.addWidget(self._mpl_canvas, 1)
 
         self._style_axes(self._ax_ref, "Reference")
-        self._style_axes(self._ax_ali, "Aligned")
         self._mpl_canvas.draw_idle()
 
     # ----------------------------------------------------------------
     #  公共 API
     # ----------------------------------------------------------------
 
-    def set_data(self, ref: np.ndarray | None, aligned: np.ndarray | None) -> None:
+    def set_data(self, ref: np.ndarray | None, aligned: np.ndarray | None = None) -> None:
         """设置原始 16-bit 全图数据。"""
         self._ref_data = ref
-        self._aligned_data = aligned
 
     def set_mask(self, mask: np.ndarray | None) -> None:
         """设置 mask 全图数据。"""
@@ -95,7 +90,6 @@ class Dual3DView(QWidget):
             mask_patch = self._extract_patch(self._mask_data, cx, cy, half)
 
         self._ax_ref.cla()
-        self._ax_ali.cla()
 
         drawn = False
         if self._ref_data is not None:
@@ -109,18 +103,6 @@ class Dual3DView(QWidget):
                 self._style_axes(self._ax_ref, "Reference (无数据)")
         else:
             self._style_axes(self._ax_ref, "Reference (未加载)")
-
-        if self._aligned_data is not None:
-            patch_a = self._extract_patch(self._aligned_data, cx, cy, half)
-            if patch_a is not None:
-                fc = self._build_facecolors(mask_patch, patch_a) if mask_patch is not None else None
-                self._plot_surface(self._ax_ali, patch_a, "Aligned", cx, cy,
-                                   facecolors=fc)
-                drawn = True
-            else:
-                self._style_axes(self._ax_ali, "Aligned (无数据)")
-        else:
-            self._style_axes(self._ax_ali, "Aligned (未加载)")
 
         if drawn:
             self._info_label.setText(

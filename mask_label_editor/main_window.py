@@ -232,73 +232,6 @@ class MainWindow(QMainWindow):
         self._act_mode_view3d.triggered.connect(lambda: self._switch_mode("view3d"))
         tb.addAction(self._act_mode_view3d)
 
-        self._act_mode_edit = QAction("✏️ Mask编辑", self)
-        self._act_mode_edit.setCheckable(True)
-        self._act_mode_edit.setChecked(False)
-        self._act_mode_edit.triggered.connect(lambda: self._switch_mode("edit_mask"))
-        tb.addAction(self._act_mode_edit)
-
-        tb.addSeparator()
-
-        act_open_img = QAction("打开图像FITS", self)
-        act_open_img.triggered.connect(self.open_image_dialog)
-        tb.addAction(act_open_img)
-
-        act_open_mask = QAction("打开Mask", self)
-        act_open_mask.triggered.connect(self.open_mask_dialog)
-        tb.addAction(act_open_mask)
-
-        act_open_codebook = QAction("打开Codebook", self)
-        act_open_codebook.triggered.connect(self.open_codebook_dialog)
-        tb.addAction(act_open_codebook)
-
-        tb.addSeparator()
-
-        act_save = QAction("💾 保存 (Ctrl+S)", self)
-        act_save.setShortcut(QKeySequence.StandardKey.Save)
-        act_save.triggered.connect(self.save_mask)
-        tb.addAction(act_save)
-
-        act_save_as = QAction("另存为", self)
-        act_save_as.setShortcut(QKeySequence("Ctrl+Shift+S"))
-        act_save_as.triggered.connect(self.save_mask_as)
-        tb.addAction(act_save_as)
-
-        act_undo = QAction("↩ 撤销 (Ctrl+Z)", self)
-        act_undo.setShortcut(QKeySequence.StandardKey.Undo)
-        act_undo.triggered.connect(self._canvas.undo)
-        tb.addAction(act_undo)
-
-        tb.addSeparator()
-        tb.addAction(self._eraser_toggle)
-
-        self._act_blink = QAction("👁 闪烁 (B)", self)
-        self._act_blink.setCheckable(True)
-        self._act_blink.setShortcut(QKeySequence("B"))
-        self._act_blink.toggled.connect(self._toggle_blink)
-        tb.addAction(self._act_blink)
-
-        act_toggle_mask_prob = QAction("🎭⇆📈 切换Mask/Prob (P)", self)
-        act_toggle_mask_prob.setShortcut(QKeySequence("P"))
-        act_toggle_mask_prob.triggered.connect(self._toggle_mask_prob)
-        tb.addAction(act_toggle_mask_prob)
-
-        tb.addSeparator()
-        tb.addWidget(self._prob_mode_label)
-        tb.addWidget(self._prob_mode_combo)
-        tb.addWidget(self._prob_class_label)
-        tb.addWidget(self._prob_class_combo)
-
-        act_toggle = QAction("⇆ 切换 (Tab)", self)
-        act_toggle.setShortcut(QKeySequence("Tab"))
-        act_toggle.triggered.connect(self._toggle_image)
-        tb.addAction(act_toggle)
-
-        act_fit = QAction("适应窗口 (F)", self)
-        act_fit.setShortcut(QKeySequence("F"))
-        act_fit.triggered.connect(self._canvas.fit_view)
-        tb.addAction(act_fit)
-
         # ---------- Image name label ----------
         self._image_name_label = QLabel("  显示: --")
         tb.addWidget(self._image_name_label)
@@ -428,32 +361,11 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self._status_file, 1)
 
     def _setup_shortcuts(self) -> None:
-        # 数字键 0-9 选择标签
-        for i in range(10):
-            sc = QShortcut(QKeySequence(str(i)), self)
-            sc.activated.connect(lambda idx=i: self._select_label_by_number(idx))
-
         # PgUp/PgDn 上下翻页
         sc_prev = QShortcut(QKeySequence("PgUp"), self)
         sc_prev.activated.connect(self._file_browser.go_prev)
         sc_next = QShortcut(QKeySequence("PgDown"), self)
         sc_next.activated.connect(self._file_browser.go_next)
-
-        # +/- 调整笔刷大小
-        sc_inc = QShortcut(QKeySequence("+"), self)
-        sc_inc.activated.connect(lambda: self._adjust_brush(2))
-        sc_inc2 = QShortcut(QKeySequence("="), self)
-        sc_inc2.activated.connect(lambda: self._adjust_brush(2))
-        sc_dec = QShortcut(QKeySequence("-"), self)
-        sc_dec.activated.connect(lambda: self._adjust_brush(-2))
-
-        # M 键切换模式
-        sc_mode = QShortcut(QKeySequence("M"), self)
-        sc_mode.activated.connect(self._toggle_mode)
-
-        # P 键切换 Mask / Prob 叠加
-        sc_prob = QShortcut(QKeySequence("P"), self)
-        sc_prob.activated.connect(self._toggle_mask_prob)
 
     def _adjust_brush(self, delta: int) -> None:
         new_r = max(1, min(100, self._brush_slider.value() + delta))
@@ -473,22 +385,13 @@ class MainWindow(QMainWindow):
         self._switch_mode(new_mode)
 
     def _apply_mode_ui(self) -> None:
-        is_view3d = (self._mode == "view3d")
-
-        self._act_mode_view3d.setChecked(is_view3d)
-        self._act_mode_edit.setChecked(not is_view3d)
-
-        if is_view3d:
-            self._side_stack.setCurrentIndex(0)
-            self._view3d.setVisible(True)
-            self._status_mode.setText("[3D查看]")
-            self._status_mode.setStyleSheet("color: #4fc3f7; font-weight: bold;")
-        else:
-            self._side_stack.setCurrentIndex(1)
-            self._view3d.setVisible(False)
-            self._canvas.hide_region_rect()
-            self._status_mode.setText("[Mask编辑]")
-            self._status_mode.setStyleSheet("color: #ff9800; font-weight: bold;")
+        # 固定只保留 3D 查看模式
+        self._mode = "view3d"
+        self._act_mode_view3d.setChecked(True)
+        self._side_stack.setCurrentIndex(0)
+        self._view3d.setVisible(True)
+        self._status_mode.setText("[3D查看]")
+        self._status_mode.setStyleSheet("color: #4fc3f7; font-weight: bold;")
 
     # ================================================================
     #                    Dialogs / Actions
@@ -703,8 +606,6 @@ class MainWindow(QMainWindow):
 
         if tile.reference:
             self._load_reference(tile.reference)
-        if tile.aligned:
-            self._load_aligned(tile.aligned)
         if tile.prob_npz:
             # 有 prob 时默认进入 prob 视图
             self._load_prob_npz(tile.prob_npz)
