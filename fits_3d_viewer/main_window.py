@@ -4,10 +4,9 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QKeySequence, QPixmap, QShortcut, QPainter, QLinearGradient
+from PySide6.QtGui import QAction, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -51,12 +50,9 @@ class MainWindow(QMainWindow):
         self._ref_path: Path | None = None
         self._aligned_path: Path | None = None
         self._mask_path: Path | None = None
-        self._prob_path: Path | None = None
         self._codebook_path: Path | None = None
         self._current_tile: TileGroup | None = None
         self._source_mask: np.ndarray | None = None
-        self._source_prob: np.ndarray | None = None
-        self._prob_display_mode: str = "mask"
         self._suspend_dirty_tracking = False
 
         self._mask_header = None
@@ -147,36 +143,6 @@ class MainWindow(QMainWindow):
         self._cluster_rerun_btn.setEnabled(False)
         self._cluster_rerun_btn.clicked.connect(self._rerun_last_cluster)
 
-        # ---------- Prob overlay mode ----------
-        self._prob_mode_label = QLabel("叠加:")
-        self._prob_mode_combo = QComboBox()
-        self._prob_mode_combo.addItems(["Mask", "Prob-Argmax", "Prob-Heatmap", "Confidence"])
-        self._prob_mode_combo.currentTextChanged.connect(self._on_prob_mode_changed)
-
-        self._prob_class_label = QLabel("类别:")
-        self._prob_class_combo = QComboBox()
-        self._prob_class_combo.currentIndexChanged.connect(self._on_prob_class_changed)
-        self._prob_class_combo.setEnabled(False)
-        self._prob_legend_title = QLabel("颜色条(置信度)")
-        self._prob_legend_title.setStyleSheet("color: #9aa0a6; font-size: 11px;")
-        self._prob_legend_bar = QLabel()
-        self._prob_legend_bar.setPixmap(self._make_prob_legend_pixmap())
-        self._prob_legend_ticks = QLabel("0.0      0.5      1.0")
-        self._prob_legend_ticks.setStyleSheet("color: #9aa0a6; font-size: 10px;")
-        self._prob_legend_title.setVisible(False)
-        self._prob_legend_bar.setVisible(False)
-        self._prob_legend_ticks.setVisible(False)
-
-        self._prob_legend_title_v3d = QLabel("颜色条(置信度)")
-        self._prob_legend_title_v3d.setStyleSheet("color: #9aa0a6; font-size: 11px;")
-        self._prob_legend_bar_v3d = QLabel()
-        self._prob_legend_bar_v3d.setPixmap(self._make_prob_legend_pixmap())
-        self._prob_legend_ticks_v3d = QLabel("0.0      0.5      1.0")
-        self._prob_legend_ticks_v3d.setStyleSheet("color: #9aa0a6; font-size: 10px;")
-        self._prob_legend_title_v3d.setVisible(False)
-        self._prob_legend_bar_v3d.setVisible(False)
-        self._prob_legend_ticks_v3d.setVisible(False)
-
         # ---------- Eraser toggle ----------
         self._eraser_toggle = QAction("橡皮 (E)", self)
         self._eraser_toggle.setCheckable(True)
@@ -265,30 +231,7 @@ class MainWindow(QMainWindow):
         cluster_form.addRow("", self._cluster_rerun_btn)
         side_layout.addWidget(cluster_box)
 
-        side_layout.addSpacing(6)
-        side_layout.addWidget(self._prob_legend_title)
-        side_layout.addWidget(self._prob_legend_bar)
-        side_layout.addWidget(self._prob_legend_ticks)
-
-        # ---------- Help text ----------
-        help_text = QLabel(
-            "快捷键:\n"
-            "  左键=绘制  中键=平移\n"
-            "  右键=取色  Ctrl+滚轮=缩放\n"
-            "  Shift+滚轮=笔刷大小\n"
-            "  Tab=切换图像  B=闪烁对比\n"
-            "  P=切换Mask/Prob\n"
-            "  E=橡皮  F=适应窗口\n"
-            "  M=切换模式\n"
-            "  标签行内[类聚]=扩展当前类\n"
-            "  调参数后可点[重跑上次类聚]\n"
-            "  参数在右侧[类聚参数]\n"
-            "  1-9=选择标签  0=背景\n"
-            "  PgUp/PgDn=上/下一张"
-        )
-        help_text.setStyleSheet("color: #888; font-size: 10px;")
-        help_text.setWordWrap(True)
-        side_layout.addWidget(help_text)
+        side_layout.addStretch(1)
 
         # ---------- Right side panel (view3d mode): empty placeholder ----------
         self._side_view3d = QWidget()
@@ -296,40 +239,24 @@ class MainWindow(QMainWindow):
         self._side_view3d.setMaximumWidth(260)
         v3d_layout = QVBoxLayout(self._side_view3d)
         v3d_layout.setContentsMargins(6, 6, 6, 6)
-        v3d_info = QLabel(
-            "3D 查看模式\n\n"
-            "左键点击图像查看局部\n"
-            "3D 像素分布\n\n"
-            "快捷键:\n"
-            "  中键=平移\n"
-            "  Ctrl+滚轮=缩放\n"
-            "  Tab=切换图像\n"
-            "  B=闪烁对比\n"
-            "  P=切换Mask/Prob\n"
-            "  F=适应窗口\n"
-            "  M=切换到编辑模式\n"
-            "  PgUp/PgDn=上/下一张"
-        )
-        v3d_info.setStyleSheet("color: #aaa; font-size: 11px;")
-        v3d_info.setWordWrap(True)
-        v3d_layout.addWidget(v3d_info)
-        v3d_layout.addWidget(self._prob_legend_title_v3d)
-        v3d_layout.addWidget(self._prob_legend_bar_v3d)
-        v3d_layout.addWidget(self._prob_legend_ticks_v3d)
         v3d_layout.addStretch(1)
 
         # ---------- Stacked widget for right panel ----------
         self._side_stack = QStackedWidget()
         self._side_stack.addWidget(self._side_view3d)   # index 0
         self._side_stack.addWidget(self._side_edit)      # index 1
+        # 右侧提示面板已关闭：收缩为 0 宽，避免留下空白占位
+        self._side_stack.setMinimumWidth(0)
+        self._side_stack.setMaximumWidth(0)
+        self._side_stack.setVisible(False)
 
-        # ---------- 中间区域: canvas 上面 + 3D 下面（用垂直 splitter） ----------
-        self._center_splitter = QSplitter(Qt.Orientation.Vertical)
+        # ---------- 中间区域: canvas 左侧 + 3D 右侧（用水平 splitter） ----------
+        self._center_splitter = QSplitter(Qt.Orientation.Horizontal)
         self._center_splitter.addWidget(self._canvas)
         self._center_splitter.addWidget(self._view3d)
-        self._center_splitter.setStretchFactor(0, 2)
-        self._center_splitter.setStretchFactor(1, 1)
-        self._center_splitter.setSizes([500, 300])
+        self._center_splitter.setStretchFactor(0, 3)
+        self._center_splitter.setStretchFactor(1, 2)
+        self._center_splitter.setSizes([900, 450])
 
         # ---------- 顶层 splitter ----------
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -339,7 +266,8 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
-        splitter.setSizes([250, 800, 200])
+        splitter.setCollapsible(2, True)
+        splitter.setSizes([250, 1000, 0])
 
         self.setCentralWidget(splitter)
 
@@ -504,60 +432,12 @@ class MainWindow(QMainWindow):
         self._set_canvas_mask_programmatically(mask)
         self._canvas.set_custom_overlay_argb(None)
         self._mask_path = path
-        self._prob_path = None
         self._source_mask = np.ascontiguousarray(mask.astype(np.int32, copy=False))
         self._dirty = False
         self._status_file.setText(
             f"📷 {self._ref_path.name if self._ref_path else '--'} | 🎭 {path.name}"
         )
         self.statusBar().showMessage(f"已加载mask: {path.name}  ({mask.shape[1]}×{mask.shape[0]})")
-
-    def _load_prob_npz(self, path: Path, check_dirty: bool = True) -> None:
-        """加载 prob.npz 并将概率张量转换为 argmax 标签图叠加显示。"""
-        if check_dirty and self._dirty and not self._confirm_discard():
-            return
-        self._reset_cluster_rerun_state()
-        with np.load(path, allow_pickle=False) as obj:
-            keys = list(obj.files)
-            if not keys:
-                raise ValueError(f"prob.npz 不包含数组: {path}")
-            preferred = ("prob", "probs", "pred", "arr_0")
-            key = next((k for k in preferred if k in obj.files), keys[0])
-            arr = np.asarray(obj[key])
-
-        label_map = self._prob_to_label_map(arr)
-        self._mask_header = None
-        self._set_canvas_mask_programmatically(label_map)
-        self._canvas.set_custom_overlay_argb(None)
-        self._mask_path = None
-        self._prob_path = path
-        self._source_prob = np.asarray(arr)
-        self._source_mask = np.ascontiguousarray(label_map.astype(np.int32, copy=False))
-        self._refresh_prob_class_combo()
-        self._dirty = False
-        self._status_file.setText(
-            f"📷 {self._ref_path.name if self._ref_path else '--'} | 📈 {path.name}"
-        )
-        h, w = label_map.shape
-        self.statusBar().showMessage(f"已加载prob(argmax): {path.name}  ({w}×{h})")
-
-    @staticmethod
-    def _prob_to_label_map(prob: np.ndarray) -> np.ndarray:
-        """将 prob 数组转换为 HxW 的 int32 标签图。"""
-        arr = np.asarray(prob)
-        arr = np.squeeze(arr)
-        if arr.ndim == 2:
-            # 若已经是 2D，则视作 label map 或单通道概率图（四舍五入到整数）
-            if np.issubdtype(arr.dtype, np.integer):
-                return np.ascontiguousarray(arr.astype(np.int32, copy=False))
-            return np.ascontiguousarray(np.rint(arr).astype(np.int32, copy=False))
-        if arr.ndim != 3:
-            raise ValueError(f"不支持的 prob 维度: {arr.shape}")
-
-        # 估计通道维：优先取最小维作为类别通道（通常类别数远小于 H/W）
-        ch_axis = int(np.argmin(arr.shape))
-        label_map = np.argmax(arr, axis=ch_axis)
-        return np.ascontiguousarray(label_map.astype(np.int32, copy=False))
 
     def _load_codebook(self, path: Path) -> None:
         labels = load_codebook(path, alpha=255)
@@ -589,22 +469,17 @@ class MainWindow(QMainWindow):
         self._ref_path = None
         self._aligned_path = None
         self._mask_path = None
-        self._prob_path = None
         self._source_mask = None
-        self._source_prob = None
         self._raw_ref = None
         self._raw_aligned = None
         self._dirty = False
 
         if tile.reference:
             self._load_reference(tile.reference)
-        if tile.prob_npz:
-            # 有 prob 时默认进入 prob 视图
-            self._load_prob_npz(tile.prob_npz)
-        elif tile.mask:
+        if tile.mask:
             self._load_mask(tile.mask)
 
-        if not tile.has_mask and tile.prob_npz is None:
+        if not tile.has_mask:
             if tile.reference:
                 fi = read_fits_image(tile.reference)
                 h, w = fi.data.shape[:2]
@@ -616,180 +491,8 @@ class MainWindow(QMainWindow):
         # 默认进入 3D 查看模式
         self._switch_mode("view3d")
 
-        # 默认叠加模式：
-        # - 有 prob.npz: Prob-Heatmap，类别优先 1（不足则回退 0）
-        # - 无 prob.npz: Mask
-        if tile.prob_npz is not None:
-            default_cls = 1 if self._prob_class_combo.count() > 1 else 0
-            if self._prob_class_combo.count() > 0:
-                self._prob_class_combo.setCurrentIndex(default_cls)
-            self._prob_mode_combo.setCurrentText("Prob-Heatmap")
-        else:
-            self._prob_mode_combo.setCurrentText("Mask")
-
         self._image_name_label.setText("  显示: reference")
         self.setWindowTitle(f"FITS Mask Label Editor - {tile.tile_id}")
-        self._apply_prob_display_mode()
-
-    def _toggle_mask_prob(self) -> None:
-        """在当前 tile 的 mask 与 prob(argmax) 之间切换显示。"""
-        tile = self._current_tile
-        if tile is None:
-            self.statusBar().showMessage("请先选择一个 tile")
-            return
-        if tile.mask is None or tile.prob_npz is None:
-            self.statusBar().showMessage("当前 tile 需要同时存在 mask 和 prob.npz 才能切换")
-            return
-
-        if self._prob_path is not None:
-            self._load_mask(tile.mask, check_dirty=False)
-            self._prob_mode_combo.setCurrentText("Mask")
-        else:
-            # 切到 prob 前保留当前未保存绘制，便于切回继续编辑
-            cur = self._canvas.get_mask()
-            if cur is not None:
-                self._source_mask = cur
-            self._load_prob_npz(tile.prob_npz, check_dirty=False)
-            self._prob_mode_combo.setCurrentText("Prob-Argmax")
-
-    def _on_prob_mode_changed(self, text: str) -> None:
-        mode_map = {
-            "Mask": "mask",
-            "Prob-Argmax": "argmax",
-            "Prob-Heatmap": "heatmap",
-            "Confidence": "confidence",
-        }
-        self._prob_display_mode = mode_map.get(text, "mask")
-        self._apply_prob_display_mode()
-
-    def _on_prob_class_changed(self, _: int) -> None:
-        if self._prob_display_mode == "heatmap":
-            self._apply_prob_display_mode()
-
-    def _refresh_prob_class_combo(self) -> None:
-        self._prob_class_combo.blockSignals(True)
-        self._prob_class_combo.clear()
-        c = self._prob_channel_count(self._source_prob)
-        if c <= 0:
-            self._prob_class_combo.addItem("0")
-        else:
-            for i in range(c):
-                self._prob_class_combo.addItem(str(i))
-        self._prob_class_combo.blockSignals(False)
-
-    def _apply_prob_display_mode(self) -> None:
-        mode = self._prob_display_mode
-        self._prob_class_combo.setEnabled(mode == "heatmap")
-        show_legend = mode in {"heatmap", "confidence"}
-        self._prob_legend_title.setVisible(show_legend)
-        self._prob_legend_bar.setVisible(show_legend)
-        self._prob_legend_ticks.setVisible(show_legend)
-        self._prob_legend_title_v3d.setVisible(show_legend)
-        self._prob_legend_bar_v3d.setVisible(show_legend)
-        self._prob_legend_ticks_v3d.setVisible(show_legend)
-
-        if mode == "mask":
-            if self._source_mask is not None:
-                self._set_canvas_mask_programmatically(self._source_mask)
-            self._canvas.set_custom_overlay_argb(None)
-            return
-
-        if self._source_prob is None:
-            if self._source_mask is not None:
-                self._set_canvas_mask_programmatically(self._source_mask)
-            self._canvas.set_custom_overlay_argb(None)
-            return
-
-        prob3d = self._normalize_prob3d(self._source_prob)
-        if prob3d is None:
-            return
-
-        if mode == "argmax":
-            label_map = np.argmax(prob3d, axis=0).astype(np.int32, copy=False)
-            self._source_mask = np.ascontiguousarray(label_map)
-            self._set_canvas_mask_programmatically(self._source_mask)
-            self._canvas.set_custom_overlay_argb(None)
-            return
-
-        if mode == "confidence":
-            conf = np.max(prob3d, axis=0)
-            overlay = self._make_heatmap_argb(conf)
-            label_map = np.argmax(prob3d, axis=0).astype(np.int32, copy=False)
-            self._source_mask = np.ascontiguousarray(label_map)
-            self._set_canvas_mask_programmatically(self._source_mask)
-            self._canvas.set_custom_overlay_argb(overlay)
-            return
-
-        ch_count = prob3d.shape[0]
-        idx = self._prob_class_combo.currentIndex()
-        if idx < 0 or idx >= ch_count:
-            idx = 0
-        hm = prob3d[idx]
-        overlay = self._make_heatmap_argb(hm)
-        label_map = np.argmax(prob3d, axis=0).astype(np.int32, copy=False)
-        self._source_mask = np.ascontiguousarray(label_map)
-        self._set_canvas_mask_programmatically(self._source_mask)
-        self._canvas.set_custom_overlay_argb(overlay)
-
-    @staticmethod
-    def _prob_channel_count(prob: np.ndarray | None) -> int:
-        if prob is None:
-            return 0
-        p = np.asarray(prob)
-        p = np.squeeze(p)
-        if p.ndim == 3:
-            return int(np.min(p.shape))
-        return 0
-
-    @staticmethod
-    def _normalize_prob3d(prob: np.ndarray) -> np.ndarray | None:
-        arr = np.asarray(prob)
-        arr = np.squeeze(arr)
-        if arr.ndim == 2:
-            return np.ascontiguousarray(arr.astype(np.float32, copy=False)[None, ...])
-        if arr.ndim != 3:
-            return None
-        ch_axis = int(np.argmin(arr.shape))
-        if ch_axis == 0:
-            out = arr
-        elif ch_axis == 1:
-            out = np.transpose(arr, (1, 0, 2))
-        else:
-            out = np.transpose(arr, (2, 0, 1))
-        return np.ascontiguousarray(out.astype(np.float32, copy=False))
-
-    @staticmethod
-    def _make_heatmap_argb(v: np.ndarray) -> np.ndarray:
-        x = np.asarray(v, dtype=np.float32)
-        if x.size == 0:
-            return np.zeros((0, 0), dtype=np.uint32)
-        # 固定概率范围，不做每图拉伸：直接按 0~1 映射颜色
-        x = np.clip(x, 0.0, 1.0)
-
-        r = np.clip(2.0 * x - 0.5, 0.0, 1.0)
-        g = np.clip(2.0 * x, 0.0, 1.0) * np.clip(2.0 - 2.0 * x, 0.0, 1.0)
-        b = np.clip(1.5 - 2.0 * x, 0.0, 1.0)
-        a = np.full_like(x, 0.75, dtype=np.float32)
-
-        rr = (r * 255.0).astype(np.uint32)
-        gg = (g * 255.0).astype(np.uint32)
-        bb = (b * 255.0).astype(np.uint32)
-        aa = (a * 255.0).astype(np.uint32)
-        return (aa << 24) | (rr << 16) | (gg << 8) | bb
-
-    @staticmethod
-    def _make_prob_legend_pixmap(width: int = 150, height: int = 14) -> QPixmap:
-        pix = QPixmap(width, height)
-        pix.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(pix)
-        grad = QLinearGradient(0, 0, width, 0)
-        grad.setColorAt(0.00, QColor(0, 0, 255))      # 0.0
-        grad.setColorAt(0.33, QColor(0, 255, 255))    # 0.33
-        grad.setColorAt(0.66, QColor(255, 255, 0))    # 0.66
-        grad.setColorAt(1.00, QColor(255, 0, 0))      # 1.0
-        painter.fillRect(0, 0, width, height, grad)
-        painter.end()
-        return pix
 
     # ================================================================
     #                    3D View interaction

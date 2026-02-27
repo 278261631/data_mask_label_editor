@@ -25,8 +25,6 @@ class TileGroup:
     mask: Path | None = None
     pred_png: Path | None = None
     pred_mask: Path | None = None
-    prob_png: Path | None = None
-    prob_npz: Path | None = None
     display_name: str = ""
     predict_display: str = "-"
     data_kind: str = "data"
@@ -48,16 +46,8 @@ class TileGroup:
         return self.pred_mask is not None
 
     @property
-    def has_prob_npz(self) -> bool:
-        return self.prob_npz is not None
-
-    @property
-    def has_prob_png(self) -> bool:
-        return self.prob_png is not None
-
-    @property
     def is_predict(self) -> bool:
-        return self.pred_png is not None or self.prob_png is not None or self.prob_npz is not None
+        return self.pred_png is not None
 
 
 def discover_tiles(data_dir: str | Path) -> list[TileGroup]:
@@ -90,7 +80,7 @@ def discover_tiles(data_dir: str | Path) -> list[TileGroup]:
             if not name_lower.endswith(fit_exts):
                 continue
 
-            # 列表只显示图像 FITS，避免把 mask/prob 文件本身作为主图条目
+            # 列表只显示图像 FITS，避免把 mask 文件本身作为主图条目
             if "_mask" in name_lower or "_prob" in name_lower:
                 continue
 
@@ -106,8 +96,6 @@ def discover_tiles(data_dir: str | Path) -> list[TileGroup]:
             g.mask = _find_existing(mask_candidates)
 
             g.pred_png = _find_existing([f.with_name(f"{prefix}_pred.png")])
-            g.prob_png = _find_existing([f.with_name(f"{prefix}_prob.png")])
-            g.prob_npz = _find_existing([f.with_name(f"{prefix}_prob.npz")])
 
             status_parts = ["F"]
             if g.aligned:
@@ -118,10 +106,6 @@ def discover_tiles(data_dir: str | Path) -> list[TileGroup]:
             pred_parts = []
             if g.pred_png:
                 pred_parts.append("pred.png")
-            if g.prob_png:
-                pred_parts.append("prob.png")
-            if g.prob_npz:
-                pred_parts.append("prob.npz")
 
             g.predict_display = "/".join(pred_parts) if pred_parts else "-"
             g.data_kind = "predict" if g.is_predict else "data"
