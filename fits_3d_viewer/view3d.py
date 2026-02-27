@@ -21,13 +21,15 @@ class Dual3DView(QWidget):
         self._patch_size = 30  # 默认 30×30
         self._ref_data: np.ndarray | None = None   # 原始 16-bit 全图
 
-        # matplotlib figure —— 单子图
-        self._fig = Figure(figsize=(10, 4), dpi=100, facecolor="#2b2b2b")
-        self._ax_ref = self._fig.add_subplot(1, 1, 1, projection="3d", facecolor="#1e1e1e")
-        self._fig.subplots_adjust(left=0.04, right=0.98, bottom=0.02, top=0.92, wspace=0.15)
+        # matplotlib figure —— 上下两个子图
+        # 上：自动 z 轴；下：固定 z=0~65535
+        self._fig = Figure(figsize=(10, 7), dpi=100, facecolor="#2b2b2b")
+        self._ax_ref = self._fig.add_subplot(2, 1, 1, projection="3d", facecolor="#1e1e1e")
+        self._ax_ref_fixed = self._fig.add_subplot(2, 1, 2, projection="3d", facecolor="#1e1e1e")
+        self._fig.subplots_adjust(left=0.04, right=0.98, bottom=0.03, top=0.95, hspace=0.25)
 
         self._mpl_canvas = FigureCanvas(self._fig)
-        self._mpl_canvas.setMinimumHeight(300)
+        self._mpl_canvas.setMinimumHeight(520)
 
         # 顶部信息栏
         self._info_label = QLabel("点击图像选择查看区域")
@@ -53,7 +55,8 @@ class Dual3DView(QWidget):
         layout.addLayout(top_bar)
         layout.addWidget(self._mpl_canvas, 1)
 
-        self._style_axes(self._ax_ref, "Reference")
+        self._style_axes(self._ax_ref, "Reference (自动Z轴)")
+        self._style_axes(self._ax_ref_fixed, "Reference (固定Z轴 0~65535)")
         self._mpl_canvas.draw_idle()
 
     # ----------------------------------------------------------------
@@ -72,17 +75,28 @@ class Dual3DView(QWidget):
         half = self._patch_size // 2
 
         self._ax_ref.cla()
+        self._ax_ref_fixed.cla()
 
         drawn = False
         if self._ref_data is not None:
             patch_r = self._extract_patch(self._ref_data, cx, cy, half)
             if patch_r is not None:
-                self._plot_surface(self._ax_ref, patch_r, "Reference", cx, cy)
+                self._plot_surface(self._ax_ref, patch_r, "Reference (自动Z轴)", cx, cy)
+                self._plot_surface(
+                    self._ax_ref_fixed,
+                    patch_r,
+                    "Reference (固定Z轴 0~65535)",
+                    cx,
+                    cy,
+                    zlim=(0.0, 65535.0),
+                )
                 drawn = True
             else:
                 self._style_axes(self._ax_ref, "Reference (无数据)")
+                self._style_axes(self._ax_ref_fixed, "Reference (无数据)")
         else:
             self._style_axes(self._ax_ref, "Reference (未加载)")
+            self._style_axes(self._ax_ref_fixed, "Reference (未加载)")
 
         if drawn:
             self._info_label.setText(
@@ -112,7 +126,15 @@ class Dual3DView(QWidget):
             return None
         return data[y0c:y1c, x0c:x1c].astype(np.float64)
 
-    def _plot_surface(self, ax, patch: np.ndarray, title: str, cx: int, cy: int) -> None:
+    def _plot_surface(
+        self,
+        ax,
+        patch: np.ndarray,
+        title: str,
+        cx: int,
+        cy: int,
+        zlim: tuple[float, float] | None = None,
+    ) -> None:
         ph, pw = patch.shape
         half = self._patch_size // 2
         X = np.arange(cx - half, cx - half + pw)
@@ -121,6 +143,9 @@ class Dual3DView(QWidget):
 
         ax.plot_surface(X, Y, patch, cmap="coolwarm", edgecolor="none",
                         alpha=1.0, rstride=1, cstride=1, antialiased=False)
+
+        if zlim is not None:
+            ax.set_zlim(zlim[0], zlim[1])
 
         ax.set_title(title, color="white", fontsize=11, pad=2)
         ax.set_xlabel("X", color="#aaa", fontsize=8, labelpad=1)
