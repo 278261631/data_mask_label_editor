@@ -32,12 +32,12 @@ class Dual3DView(QWidget):
         self._mpl_canvas.setMinimumHeight(520)
 
         # 顶部信息栏
-        self._info_label = QLabel("点击图像选择查看区域")
+        self._info_label = QLabel("Click image to inspect a local region")
         self._info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._info_label.setStyleSheet("color: #ccc; font-size: 12px; padding: 4px;")
 
         # Patch size 调节
-        size_label = QLabel("区域大小:")
+        size_label = QLabel("Patch size:")
         size_label.setStyleSheet("color: #ccc;")
         self._size_spin = QSpinBox()
         self._size_spin.setRange(10, 100)
@@ -55,8 +55,8 @@ class Dual3DView(QWidget):
         layout.addLayout(top_bar)
         layout.addWidget(self._mpl_canvas, 1)
 
-        self._style_axes(self._ax_ref, "Reference (自动Z轴)")
-        self._style_axes(self._ax_ref_fixed, "Reference (固定Z轴 0~65535)")
+        self._style_axes(self._ax_ref, "Auto Z-axis")
+        self._style_axes(self._ax_ref_fixed, "Fixed Z-axis (0-65535)")
         self._mpl_canvas.draw_idle()
 
     # ----------------------------------------------------------------
@@ -81,26 +81,26 @@ class Dual3DView(QWidget):
         if self._ref_data is not None:
             patch_r = self._extract_patch(self._ref_data, cx, cy, half)
             if patch_r is not None:
-                self._plot_surface(self._ax_ref, patch_r, "Reference (自动Z轴)", cx, cy)
+                self._plot_surface(self._ax_ref, patch_r, "Auto Z-axis", cx, cy)
                 self._plot_surface(
                     self._ax_ref_fixed,
                     patch_r,
-                    "Reference (固定Z轴 0~65535)",
+                    "Fixed Z-axis (0-65535)",
                     cx,
                     cy,
                     zlim=(0.0, 65535.0),
                 )
                 drawn = True
             else:
-                self._style_axes(self._ax_ref, "Reference (无数据)")
-                self._style_axes(self._ax_ref_fixed, "Reference (无数据)")
+                self._style_axes(self._ax_ref, "No data")
+                self._style_axes(self._ax_ref_fixed, "No data")
         else:
-            self._style_axes(self._ax_ref, "Reference (未加载)")
-            self._style_axes(self._ax_ref_fixed, "Reference (未加载)")
+            self._style_axes(self._ax_ref, "Not loaded")
+            self._style_axes(self._ax_ref_fixed, "Not loaded")
 
         if drawn:
             self._info_label.setText(
-                f"中心: ({cx}, {cy})  |  区域: {self._patch_size}×{self._patch_size} px"
+                f"Center: ({cx}, {cy})  |  Patch: {self._patch_size}x{self._patch_size} px"
             )
 
         self._mpl_canvas.draw_idle()
