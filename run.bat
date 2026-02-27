@@ -1,4 +1,4 @@
 @echo off
 cd /d "%~dp0"
-python -m mask_label_editor
+python -m fits_3d_viewer
 

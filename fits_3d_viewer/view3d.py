@@ -12,7 +12,7 @@ from matplotlib.figure import Figure
 from PySide6.QtWidgets import QVBoxLayout, QWidget, QLabel, QHBoxLayout, QSpinBox
 from PySide6.QtCore import Qt
 
-from mask_label_editor.labels import Label
+from fits_3d_viewer.labels import Label
 
 
 class Dual3DView(QWidget):

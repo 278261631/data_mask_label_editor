@@ -28,18 +28,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mask_label_editor.canvas import MaskCanvas
-from mask_label_editor.codebook import load_codebook
-from mask_label_editor.config import AppConfig
-from mask_label_editor.file_browser import FileBrowser, TileGroup
-from mask_label_editor.fits_io import (
+from fits_3d_viewer.canvas import MaskCanvas
+from fits_3d_viewer.codebook import load_codebook
+from fits_3d_viewer.config import AppConfig
+from fits_3d_viewer.file_browser import FileBrowser, TileGroup
+from fits_3d_viewer.fits_io import (
     read_fits_image,
     read_mask_image,
     to_uint8_view,
     write_mask_image,
 )
-from mask_label_editor.labels import Label, default_labels, ensure_unique_codes
-from mask_label_editor.view3d import Dual3DView
+from fits_3d_viewer.labels import Label, default_labels, ensure_unique_codes
+from fits_3d_viewer.view3d import Dual3DView
 
 
 class MainWindow(QMainWindow):
@@ -75,8 +75,6 @@ class MainWindow(QMainWindow):
 
         # ---------- Canvas ----------
         self._canvas = MaskCanvas()
-        self._canvas.set_overlay_opacity(cfg.overlay_alpha)
-        self._canvas.set_brush_radius(cfg.brush_radius)
         self._canvas.set_mode("view3d")
         self._canvas.mask_changed.connect(self._on_mask_changed)
         self._canvas.cursor_pixel.connect(self._on_cursor_pixel)
@@ -105,16 +103,16 @@ class MainWindow(QMainWindow):
         # ---------- Brush slider ----------
         self._brush_slider = QSlider(Qt.Orientation.Horizontal)
         self._brush_slider.setRange(1, 100)
-        self._brush_slider.setValue(cfg.brush_radius)
+        self._brush_slider.setValue(8)
         self._brush_slider.valueChanged.connect(self._on_brush_changed)
-        self._brush_label = QLabel(f"笔刷: {cfg.brush_radius}")
+        self._brush_label = QLabel("笔刷: 8")
 
         # ---------- Alpha slider ----------
         self._alpha_slider = QSlider(Qt.Orientation.Horizontal)
         self._alpha_slider.setRange(0, 100)
-        self._alpha_slider.setValue(int(cfg.overlay_alpha * 100))
+        self._alpha_slider.setValue(50)
         self._alpha_slider.valueChanged.connect(self._on_alpha_changed)
-        self._alpha_label = QLabel(f"透明度: {int(cfg.overlay_alpha * 100)}%")
+        self._alpha_label = QLabel("透明度: 50%")
 
         # ---------- Cluster params ----------
         self._cluster_k_spin = QSpinBox()
@@ -196,10 +194,6 @@ class MainWindow(QMainWindow):
         # 如果有数据目录，刷新文件浏览器
         if cfg.data_dir:
             self._file_browser.set_data_dir(cfg.data_dir)
-
-        # 恢复上次打开的文件
-        if cfg.last_codebook_path and Path(cfg.last_codebook_path).exists():
-            self._load_codebook(Path(cfg.last_codebook_path))
 
         # 初始模式 UI 状态
         self._apply_mode_ui()
@@ -573,8 +567,6 @@ class MainWindow(QMainWindow):
         self._view3d.set_labels(labels)
         self._rebuild_label_list()
         self._codebook_path = path
-        self._cfg.last_codebook_path = str(path)
-        self._cfg.save()
         self.statusBar().showMessage(f"已加载codebook: {path.name}（{len(labels)}类）")
 
     def _do_save(self, path: Path) -> None:
@@ -887,15 +879,11 @@ class MainWindow(QMainWindow):
 
     def _on_brush_changed(self, v: int) -> None:
         self._canvas.set_brush_radius(v)
-        self._cfg.brush_radius = int(v)
-        self._cfg.save()
         self._brush_label.setText(f"笔刷: {v}")
 
     def _on_alpha_changed(self, v: int) -> None:
         alpha = float(v) / 100.0
         self._canvas.set_overlay_opacity(alpha)
-        self._cfg.overlay_alpha = alpha
-        self._cfg.save()
         self._alpha_label.setText(f"透明度: {v}%")
 
     def _select_label_by_number(self, num: int) -> None:

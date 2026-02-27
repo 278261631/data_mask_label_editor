@@ -21,7 +21,7 @@ pip install -r requirements.txt
 ### 运行
 
 ```bash
-python -m mask_label_editor
+python -m fits_3d_viewer
 ```
 
 ### 数据与 codebook 约定（尽量兼容）

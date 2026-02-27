@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 from astropy.io import fits
 
-from mask_label_editor.labels import Label, default_labels, ensure_unique_codes, make_label
+from fits_3d_viewer.labels import Label, default_labels, ensure_unique_codes, make_label
 
 
 def load_codebook(path: str | Path, alpha: int = 128) -> list[Label]:

@@ -18,11 +18,6 @@ def _config_path() -> Path:
 @dataclass
 class AppConfig:
     data_dir: str = DEFAULT_DATA_DIR
-    last_image_path: str = ""
-    last_mask_path: str = ""
-    last_codebook_path: str = ""
-    overlay_alpha: float = 0.5
-    brush_radius: int = 8
 
     @classmethod
     def load(cls) -> "AppConfig":

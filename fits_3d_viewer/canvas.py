@@ -13,8 +13,8 @@ from PySide6.QtWidgets import (
     QGraphicsView,
 )
 
-from mask_label_editor.labels import Label, labels_to_lut
-from mask_label_editor.qt_image import argb32_to_qimage, gray8_to_qimage
+from fits_3d_viewer.labels import Label, labels_to_lut
+from fits_3d_viewer.qt_image import argb32_to_qimage, gray8_to_qimage
 
 
 @dataclass

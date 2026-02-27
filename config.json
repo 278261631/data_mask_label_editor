@@ -1,8 +1,3 @@
 {
-  "data_dir": "D:\\github\\test_img",
-  "last_image_path": "",
-  "last_mask_path": "",
-  "last_codebook_path": "",
-  "overlay_alpha": 0.5,
-  "brush_radius": 8
+  "data_dir": "D:\\github\\test_img"
 }

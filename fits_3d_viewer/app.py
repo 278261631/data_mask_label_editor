@@ -4,8 +4,8 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from mask_label_editor.config import AppConfig
-from mask_label_editor.main_window import MainWindow
+from fits_3d_viewer.config import AppConfig
+from fits_3d_viewer.main_window import MainWindow
 
 
 def run() -> None:
