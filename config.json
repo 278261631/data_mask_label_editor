@@ -1,4 +1,6 @@
 {
   "data_dir": "D:\\github\\test_img",
-  "patch_size": 50
+  "patch_size": 50,
+  "bg_method": "robust_pipeline",
+  "bg_scale": 48
 }

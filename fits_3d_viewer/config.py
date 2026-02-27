@@ -19,6 +19,8 @@ def _config_path() -> Path:
 class AppConfig:
     data_dir: str = DEFAULT_DATA_DIR
     patch_size: int = 30
+    bg_method: str = "original"
+    bg_scale: int = 48
 
     def __post_init__(self) -> None:
         try:
@@ -26,6 +28,30 @@ class AppConfig:
         except Exception:
             v = 30
         self.patch_size = max(10, min(100, v))
+
+        # 兼容旧配置名
+        legacy_map = {
+            "mesh_median": "mesh_sigma_clip",
+            "gaussian_lowpass": "mesh_sigma_clip",
+        }
+        self.bg_method = legacy_map.get(self.bg_method, self.bg_method)
+        allowed_methods = {
+            "original",
+            "mesh_sigma_clip",
+            "morph_opening",
+            "poly2d",
+            "wavelet_multiscale",
+            "rpca_lowrank_sparse",
+            "robust_pipeline",
+        }
+        if self.bg_method not in allowed_methods:
+            self.bg_method = "original"
+
+        try:
+            s = int(self.bg_scale)
+        except Exception:
+            s = 48
+        self.bg_scale = max(8, min(256, s))
 
     @classmethod
     def load(cls) -> "AppConfig":
