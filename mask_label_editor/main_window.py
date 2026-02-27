@@ -68,6 +68,7 @@ class MainWindow(QMainWindow):
         self._labels: list[Label] = default_labels(alpha=255)
         self._cluster_rng = np.random.default_rng(20260227)
         self._last_cluster_code: int | None = None
+        self._cluster_base_mask: np.ndarray | None = None
 
         # ---------- 当前模式 ----------
         self._mode = "view3d"  # "view3d" | "edit_mask"
@@ -597,6 +598,7 @@ class MainWindow(QMainWindow):
     def _load_mask(self, path: Path, check_dirty: bool = True) -> None:
         if check_dirty and self._dirty and not self._confirm_discard():
             return
+        self._reset_cluster_rerun_state()
         mask = read_mask_image(path)
         self._mask_header = None
         if path.suffix.lower() in {".fits", ".fit", ".fts"}:
@@ -617,6 +619,7 @@ class MainWindow(QMainWindow):
         """加载 prob.npz 并将概率张量转换为 argmax 标签图叠加显示。"""
         if check_dirty and self._dirty and not self._confirm_discard():
             return
+        self._reset_cluster_rerun_state()
         with np.load(path, allow_pickle=False) as obj:
             keys = list(obj.files)
             if not keys:
@@ -685,6 +688,7 @@ class MainWindow(QMainWindow):
         if self._dirty and not self._confirm_discard():
             return
 
+        self._reset_cluster_rerun_state()
         self._current_tile = tile
         self._canvas.clear_all()
         self._ref_path = None
@@ -1006,8 +1010,14 @@ class MainWindow(QMainWindow):
     # ================================================================
 
     def _on_cluster_for_label(self, code: int) -> None:
+        base = self._canvas.get_mask()
+        if base is None:
+            QMessageBox.information(self, "类聚", "当前没有可操作的 mask。")
+            return
         if self._mode != "edit_mask":
             self._switch_mode("edit_mask")
+        # 保存本次类聚前的基线，供“重跑上次类聚”回退后再计算。
+        self._cluster_base_mask = base
         self._last_cluster_code = int(code)
         self._cluster_rerun_btn.setEnabled(True)
         self._run_kmeans_expand_for_code(code)
@@ -1016,9 +1026,22 @@ class MainWindow(QMainWindow):
         if self._last_cluster_code is None:
             self.statusBar().showMessage("还没有可重跑的类聚记录。")
             return
+        if self._cluster_base_mask is None:
+            self.statusBar().showMessage("缺少类聚基线，先执行一次标签类聚。")
+            return
         if self._mode != "edit_mask":
             self._switch_mode("edit_mask")
+        base = self._cluster_base_mask.copy()
+        self._set_canvas_mask_programmatically(base)
+        self._canvas.set_custom_overlay_argb(None)
+        self._source_mask = base
+        self._dirty = True
         self._run_kmeans_expand_for_code(int(self._last_cluster_code))
+
+    def _reset_cluster_rerun_state(self) -> None:
+        self._last_cluster_code = None
+        self._cluster_base_mask = None
+        self._cluster_rerun_btn.setEnabled(False)
 
     @staticmethod
     def _box_mean(img: np.ndarray, radius: int = 1) -> np.ndarray:
