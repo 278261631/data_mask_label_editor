@@ -1,21 +1,8 @@
 {
-  "data_dir": "D:\\github\\test_img",
-  "window_width": 1954,
-  "window_height": 900,
-  "patch_size": 50,
-  "bg_method": "rpca_lowrank_sparse",
-  "bg_scale": 48,
-  "mesh_box": 18,
-  "mesh_clip_sigma": 3.0,
-  "morph_radius": 24,
-  "poly_sample_size": 60000,
-  "poly_clip_sigma": 3.0,
-  "wavelet_base_sigma": 8.0,
-  "wavelet_levels": 4,
-  "rpca_rank_keep": 10,
-  "pipeline_box": 16,
-  "pipeline_clip_sigma": 3.0,
-  "pipeline_denoise_sigma": 2.0,
-  "pipeline_mix_alpha": 0.7,
-  "pipeline_asinh_gain": 8.0
+  "data_dir": "D:\\github\\SiameseNetwork_fits_diff\\data",
+  "last_image_path": "",
+  "last_mask_path": "",
+  "last_codebook_path": "D:\\github\\SiameseNetwork_fits_diff\\data\\mask_codebook.json",
+  "overlay_alpha": 0.53,
+  "brush_radius": 1
 }

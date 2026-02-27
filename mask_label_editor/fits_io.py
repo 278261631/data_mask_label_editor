@@ -45,6 +45,40 @@ def write_fits_image(path: str | Path, data: np.ndarray, header: Any | None = No
     hdul.writeto(p, overwrite=overwrite)
 
 
+# -------------------- PNG mask support --------------------
+
+def read_mask_image(path: str | Path) -> np.ndarray:
+    """读取 mask 文件（支持 FITS 和 PNG/图像格式）。返回 2D int 数组。"""
+    from imageio.v3 import imread as iio_read
+    p = Path(path)
+    suffix = p.suffix.lower()
+    if suffix in {".fits", ".fit", ".fts"}:
+        fi = read_fits_image(p)
+        return np.squeeze(fi.data)
+    else:
+        # PNG / BMP / TIFF 等图像格式
+        img = iio_read(p)
+        arr = np.asarray(img)
+        if arr.ndim == 3:
+            # 取第一个通道（灰度 mask）
+            arr = arr[:, :, 0]
+        return arr.astype(np.int32)
+
+
+def write_mask_image(path: str | Path, mask: np.ndarray, header: Any | None = None, overwrite: bool = True) -> None:
+    """保存 mask 文件（根据后缀自动选择 FITS 或 PNG）。"""
+    from imageio.v3 import imwrite as iio_write
+    p = Path(path)
+    suffix = p.suffix.lower()
+    if suffix in {".fits", ".fit", ".fts"}:
+        out = mask.astype(np.uint16, copy=False)
+        write_fits_image(p, out, header=header, overwrite=overwrite)
+    else:
+        # PNG 等图像格式
+        out = mask.astype(np.uint8, copy=False)
+        iio_write(p, out)
+
+
 def robust_minmax_u16(x: np.ndarray, lo_pct: float = 1.0, hi_pct: float = 99.0) -> tuple[float, float]:
     x = np.asarray(x)
     x = x[np.isfinite(x)]

@@ -1,4 +1,4 @@
-from fits_3d_viewer.app import run
+from mask_label_editor.app import run
 
 
 if __name__ == "__main__":
