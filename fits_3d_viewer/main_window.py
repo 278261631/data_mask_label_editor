@@ -407,5 +407,8 @@ class MainWindow(QMainWindow):
         self._image_name_label.setText(f"  显示: {name}")
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
+        self._cfg.window_width = int(self.width())
+        self._cfg.window_height = int(self.height())
+        self._cfg.save()
         self._blink_timer.stop()
         event.accept()

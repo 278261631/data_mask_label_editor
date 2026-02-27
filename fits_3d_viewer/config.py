@@ -18,6 +18,8 @@ def _config_path() -> Path:
 @dataclass
 class AppConfig:
     data_dir: str = DEFAULT_DATA_DIR
+    window_width: int = 1680
+    window_height: int = 900
     patch_size: int = 30
     bg_method: str = "original"
     bg_scale: int = 48
@@ -36,6 +38,9 @@ class AppConfig:
     pipeline_asinh_gain: float = 8.0
 
     def __post_init__(self) -> None:
+        self.window_width = max(960, min(4096, int(self.window_width)))
+        self.window_height = max(640, min(2160, int(self.window_height)))
+
         try:
             v = int(self.patch_size)
         except Exception:

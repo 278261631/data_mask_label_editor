@@ -1,7 +1,9 @@
 {
   "data_dir": "D:\\github\\test_img",
+  "window_width": 1954,
+  "window_height": 900,
   "patch_size": 50,
-  "bg_method": "wavelet_multiscale",
+  "bg_method": "original",
   "bg_scale": 48,
   "mesh_box": 48,
   "mesh_clip_sigma": 3.0,

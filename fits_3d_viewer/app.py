@@ -12,7 +12,7 @@ def run() -> None:
     cfg = AppConfig.load()
     app = QApplication(sys.argv)
     w = MainWindow(cfg)
-    w.resize(1680, 900)
+    w.resize(cfg.window_width, cfg.window_height)
     w.show()
     sys.exit(app.exec())
 
