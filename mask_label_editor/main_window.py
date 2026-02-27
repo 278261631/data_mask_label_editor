@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QKeySequence, QPixmap, QIcon, QShortcut, QPainter, QLinearGradient
+from PySide6.QtGui import QAction, QColor, QKeySequence, QPixmap, QShortcut, QPainter, QLinearGradient
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QPushButton,
     QSlider,
     QSplitter,
     QStackedWidget,
@@ -60,6 +61,7 @@ class MainWindow(QMainWindow):
         self._raw_aligned: np.ndarray | None = None
 
         self._labels: list[Label] = default_labels(alpha=255)
+        self._cluster_rng = np.random.default_rng(20260227)
 
         # ---------- 当前模式 ----------
         self._mode = "view3d"  # "view3d" | "edit_mask"
@@ -293,6 +295,7 @@ class MainWindow(QMainWindow):
             "  P=切换Mask/Prob\n"
             "  E=橡皮  F=适应窗口\n"
             "  M=切换模式\n"
+            "  标签行内[类聚]=扩展当前类\n"
             "  1-9=选择标签  0=背景\n"
             "  PgUp/PgDn=上/下一张"
         )
@@ -943,16 +946,183 @@ class MainWindow(QMainWindow):
     #                    Label list
     # ================================================================
 
+    def _on_cluster_for_label(self, code: int) -> None:
+        if self._mode != "edit_mask":
+            self._switch_mode("edit_mask")
+        self._run_kmeans_expand_for_code(code)
+
+    @staticmethod
+    def _box_mean(img: np.ndarray, radius: int = 1) -> np.ndarray:
+        """积分图实现均值滤波，避免引入 scipy 依赖。"""
+        r = max(0, int(radius))
+        if r == 0:
+            return np.asarray(img, dtype=np.float32)
+        x = np.asarray(img, dtype=np.float32)
+        x_pad = np.pad(x, ((r, r), (r, r)), mode="reflect")
+        ii = np.pad(x_pad, ((1, 0), (1, 0)), mode="constant")
+        ii = np.cumsum(np.cumsum(ii, axis=0), axis=1)
+        k = 2 * r + 1
+        area = float(k * k)
+        s = ii[k:, k:] - ii[:-k, k:] - ii[k:, :-k] + ii[:-k, :-k]
+        return s / area
+
+    @classmethod
+    def _local_mean_std(cls, img: np.ndarray, radius: int = 1) -> tuple[np.ndarray, np.ndarray]:
+        mu = cls._box_mean(img, radius=radius)
+        mu2 = cls._box_mean(np.asarray(img, dtype=np.float32) ** 2, radius=radius)
+        var = np.maximum(mu2 - mu * mu, 1e-8)
+        return mu.astype(np.float32, copy=False), np.sqrt(var, dtype=np.float32)
+
+    def _build_cluster_features(self) -> np.ndarray | None:
+        if self._raw_ref is None or self._raw_aligned is None:
+            return None
+        ref = np.asarray(self._raw_ref, dtype=np.float32)
+        ali = np.asarray(self._raw_aligned, dtype=np.float32)
+        if ref.shape != ali.shape:
+            return None
+        diff = ref - ali
+        adiff = np.abs(diff)
+        ref_mu, ref_std = self._local_mean_std(ref, radius=1)
+        ali_mu, ali_std = self._local_mean_std(ali, radius=1)
+        ad_mu = self._box_mean(adiff, radius=1)
+        feat = np.stack(
+            [ref, ali, diff, adiff, ref_mu, ref_std, ali_mu, ali_std, ad_mu],
+            axis=-1,
+        )
+        return feat.astype(np.float32, copy=False)
+
+    def _kmeans_fit(self, x: np.ndarray, k: int, max_iter: int = 25) -> np.ndarray:
+        n = x.shape[0]
+        if n == 0:
+            raise ValueError("kmeans 输入为空")
+        if n <= k:
+            return x.copy()
+        idx = self._cluster_rng.choice(n, size=k, replace=False)
+        centers = np.ascontiguousarray(x[idx], dtype=np.float32)
+        for _ in range(max_iter):
+            d2 = ((x[:, None, :] - centers[None, :, :]) ** 2).sum(axis=2)
+            labels = np.argmin(d2, axis=1)
+            new_centers = centers.copy()
+            for ci in range(k):
+                sel = labels == ci
+                if not np.any(sel):
+                    new_centers[ci] = x[self._cluster_rng.integers(0, n)]
+                else:
+                    new_centers[ci] = x[sel].mean(axis=0)
+            shift = float(np.linalg.norm(new_centers - centers))
+            centers = new_centers
+            if shift < 1e-4:
+                break
+        return centers
+
+    @staticmethod
+    def _assign_to_centers(x: np.ndarray, centers: np.ndarray, chunk: int = 250000) -> np.ndarray:
+        n = x.shape[0]
+        out = np.empty(n, dtype=np.int16)
+        for i in range(0, n, chunk):
+            j = min(n, i + chunk)
+            d2 = ((x[i:j, None, :] - centers[None, :, :]) ** 2).sum(axis=2)
+            out[i:j] = np.argmin(d2, axis=1).astype(np.int16, copy=False)
+        return out
+
+    def _run_kmeans_expand_for_code(self, code: int) -> None:
+        cur = self._canvas.get_mask()
+        if cur is None:
+            QMessageBox.information(self, "类聚", "当前没有可操作的 mask。")
+            return
+        if self._raw_ref is None or self._raw_aligned is None:
+            QMessageBox.information(self, "类聚", "需要同时加载 reference 与 aligned 才能类聚。")
+            return
+        if cur.shape != self._raw_ref.shape or cur.shape != self._raw_aligned.shape:
+            QMessageBox.warning(self, "类聚", "mask 与图像尺寸不一致，无法类聚。")
+            return
+
+        seed = cur == int(code)
+        seed_count = int(np.count_nonzero(seed))
+        if seed_count < 20:
+            QMessageBox.information(self, "类聚", f"标签 code={code} 的已标注像素太少（{seed_count}），至少需要 20。")
+            return
+
+        feat = self._build_cluster_features()
+        if feat is None:
+            QMessageBox.warning(self, "类聚", "无法构建类聚特征。")
+            return
+
+        h, w, d = feat.shape
+        x_all = feat.reshape(-1, d)
+        x_mean = x_all.mean(axis=0, keepdims=True)
+        x_std = x_all.std(axis=0, keepdims=True)
+        x_std = np.where(x_std < 1e-6, 1.0, x_std)
+        x_all = (x_all - x_mean) / x_std
+
+        n = x_all.shape[0]
+        sample_n = min(20000, n)
+        sample_idx = self._cluster_rng.choice(n, size=sample_n, replace=False)
+        x_sample = x_all[sample_idx]
+
+        k = 5
+        centers = self._kmeans_fit(x_sample, k=k, max_iter=20)
+        labels_all = self._assign_to_centers(x_all, centers=centers).reshape(h, w)
+        seed_labels = labels_all[seed]
+        seed_hist = np.bincount(seed_labels, minlength=k)
+        best = int(np.argmax(seed_hist))
+
+        total_hist = np.bincount(labels_all.reshape(-1), minlength=k)
+        cluster_precision = seed_hist / np.maximum(total_hist, 1)
+        cluster_recall = seed_hist / max(seed_count, 1)
+
+        target_clusters = [best]
+        for ci in range(k):
+            if ci == best:
+                continue
+            if cluster_precision[ci] >= 0.12 and cluster_recall[ci] >= 0.08:
+                target_clusters.append(ci)
+        target_clusters_set = set(target_clusters)
+
+        candidate = np.isin(labels_all, list(target_clusters_set))
+        writable = (cur == 0) | (cur == int(code))
+        new_hits = candidate & writable
+        add_only = new_hits & (cur != int(code))
+        add_count = int(np.count_nonzero(add_only))
+        if add_count <= 0:
+            self.statusBar().showMessage(f"类聚完成：code={code}，没有新增像素。")
+            return
+
+        out = cur.copy()
+        out[new_hits] = int(code)
+        self._set_canvas_mask_programmatically(out)
+        self._canvas.set_custom_overlay_argb(None)
+        self._source_mask = out
+        self._dirty = True
+        self.statusBar().showMessage(
+            f"类聚完成：code={code}，新增 {add_count} px（簇: {sorted(target_clusters_set)}）"
+        )
+
     def _rebuild_label_list(self) -> None:
         self._label_list.blockSignals(True)
         self._label_list.clear()
         for la in self._labels:
-            r, g, b, a = la.color_rgba
-            pix = QPixmap(16, 16)
-            pix.fill(QColor(r, g, b, a))
-            icon = QIcon(pix)
-            item = QListWidgetItem(icon, f"{la.code}: {la.name}")
+            item = QListWidgetItem()
+            item.setSizeHint(QPixmap(1, 28).size())
             self._label_list.addItem(item)
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(4, 2, 4, 2)
+            row_layout.setSpacing(6)
+            r, g, b, a = la.color_rgba
+            swatch = QLabel()
+            swatch.setFixedSize(14, 14)
+            swatch.setStyleSheet(
+                f"background-color: rgba({r},{g},{b},{a}); border: 1px solid #444; border-radius: 2px;"
+            )
+            text = QLabel(f"{la.code}: {la.name}")
+            btn = QPushButton("类聚")
+            btn.setFixedHeight(22)
+            btn.clicked.connect(lambda _=False, c=la.code: self._on_cluster_for_label(c))
+            row_layout.addWidget(swatch, 0)
+            row_layout.addWidget(text, 1)
+            row_layout.addWidget(btn, 0)
+            self._label_list.setItemWidget(item, row)
         self._label_list.blockSignals(False)
         if self._labels:
             self._label_list.setCurrentRow(0)
