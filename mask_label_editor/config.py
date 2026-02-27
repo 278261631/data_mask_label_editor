@@ -23,6 +23,11 @@ class AppConfig:
     last_codebook_path: str = ""
     overlay_alpha: float = 0.5
     brush_radius: int = 8
+    rpca_lambda: float = 0.02
+    rpca_max_iter: int = 120
+    rpca_tol: float = 1e-5
+    rpca_threshold_sigma: float = 3.5
+    rpca_write_bg_only: bool = True
 
     @classmethod
     def load(cls) -> "AppConfig":

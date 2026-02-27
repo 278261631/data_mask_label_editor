@@ -39,6 +39,7 @@ from mask_label_editor.fits_io import (
     write_mask_image,
 )
 from mask_label_editor.labels import Label, default_labels, ensure_unique_codes
+from mask_label_editor.rpca import robust_pca_inexact_alm
 from mask_label_editor.view3d import Dual3DView
 
 
@@ -148,6 +149,36 @@ class MainWindow(QMainWindow):
         self._cluster_rerun_btn = QPushButton("重跑上次类聚")
         self._cluster_rerun_btn.setEnabled(False)
         self._cluster_rerun_btn.clicked.connect(self._rerun_last_cluster)
+
+        # ---------- RPCA params ----------
+        self._rpca_lambda_spin = QDoubleSpinBox()
+        self._rpca_lambda_spin.setRange(1e-5, 1.0)
+        self._rpca_lambda_spin.setDecimals(5)
+        self._rpca_lambda_spin.setSingleStep(0.001)
+        self._rpca_lambda_spin.setValue(float(cfg.rpca_lambda))
+        self._rpca_iter_spin = QSpinBox()
+        self._rpca_iter_spin.setRange(10, 2000)
+        self._rpca_iter_spin.setSingleStep(10)
+        self._rpca_iter_spin.setValue(int(cfg.rpca_max_iter))
+        self._rpca_tol_spin = QDoubleSpinBox()
+        self._rpca_tol_spin.setRange(1e-7, 1e-2)
+        self._rpca_tol_spin.setDecimals(7)
+        self._rpca_tol_spin.setSingleStep(1e-5)
+        self._rpca_tol_spin.setValue(float(cfg.rpca_tol))
+        self._rpca_sigma_spin = QDoubleSpinBox()
+        self._rpca_sigma_spin.setRange(0.5, 10.0)
+        self._rpca_sigma_spin.setDecimals(2)
+        self._rpca_sigma_spin.setSingleStep(0.1)
+        self._rpca_sigma_spin.setValue(float(cfg.rpca_threshold_sigma))
+        self._rpca_write_bg_only = QCheckBox("只写入背景(0)+当前类")
+        self._rpca_write_bg_only.setChecked(bool(cfg.rpca_write_bg_only))
+        self._rpca_run_btn = QPushButton("RPCA生成当前类")
+        self._rpca_run_btn.clicked.connect(self._run_rpca_generate_mask)
+        self._rpca_lambda_spin.valueChanged.connect(self._save_rpca_cfg)
+        self._rpca_iter_spin.valueChanged.connect(self._save_rpca_cfg)
+        self._rpca_tol_spin.valueChanged.connect(self._save_rpca_cfg)
+        self._rpca_sigma_spin.valueChanged.connect(self._save_rpca_cfg)
+        self._rpca_write_bg_only.toggled.connect(self._save_rpca_cfg)
 
         # ---------- Prob overlay mode ----------
         self._prob_mode_label = QLabel("叠加:")
@@ -339,6 +370,20 @@ class MainWindow(QMainWindow):
         side_layout.addWidget(cluster_box)
 
         side_layout.addSpacing(6)
+        rpca_box = QGroupBox("RPCA参数")
+        rpca_form = QFormLayout(rpca_box)
+        rpca_form.setContentsMargins(8, 6, 8, 6)
+        rpca_form.setHorizontalSpacing(8)
+        rpca_form.setVerticalSpacing(4)
+        rpca_form.addRow("lambda", self._rpca_lambda_spin)
+        rpca_form.addRow("最大迭代", self._rpca_iter_spin)
+        rpca_form.addRow("收敛阈值", self._rpca_tol_spin)
+        rpca_form.addRow("变化阈值σ", self._rpca_sigma_spin)
+        rpca_form.addRow("", self._rpca_write_bg_only)
+        rpca_form.addRow("", self._rpca_run_btn)
+        side_layout.addWidget(rpca_box)
+
+        side_layout.addSpacing(6)
         side_layout.addWidget(self._prob_legend_title)
         side_layout.addWidget(self._prob_legend_bar)
         side_layout.addWidget(self._prob_legend_ticks)
@@ -356,6 +401,7 @@ class MainWindow(QMainWindow):
             "  标签行内[类聚]=扩展当前类\n"
             "  调参数后可点[重跑上次类聚]\n"
             "  参数在右侧[类聚参数]\n"
+            "  可用[RPCA生成当前类]提变化区\n"
             "  1-9=选择标签  0=背景\n"
             "  PgUp/PgDn=上/下一张"
         )
@@ -1104,6 +1150,44 @@ class MainWindow(QMainWindow):
             "bg_only": bg_only,
         }
 
+    def _save_rpca_cfg(self, *_args) -> None:
+        self._cfg.rpca_lambda = float(self._rpca_lambda_spin.value())
+        self._cfg.rpca_max_iter = int(self._rpca_iter_spin.value())
+        self._cfg.rpca_tol = float(self._rpca_tol_spin.value())
+        self._cfg.rpca_threshold_sigma = float(self._rpca_sigma_spin.value())
+        self._cfg.rpca_write_bg_only = bool(self._rpca_write_bg_only.isChecked())
+        self._cfg.save()
+
+    def _get_rpca_params(self) -> dict[str, float | int | bool]:
+        lam = float(self._rpca_lambda_spin.value())
+        max_iter = int(self._rpca_iter_spin.value())
+        tol = float(self._rpca_tol_spin.value())
+        sigma = float(self._rpca_sigma_spin.value())
+        bg_only = bool(self._rpca_write_bg_only.isChecked())
+        return {
+            "lambda": max(lam, 1e-9),
+            "max_iter": max(1, max_iter),
+            "tol": max(tol, 1e-9),
+            "sigma": max(sigma, 0.1),
+            "bg_only": bg_only,
+        }
+
+    def _current_selected_code(self) -> int:
+        idx = self._label_list.currentRow()
+        if 0 <= idx < len(self._labels):
+            return int(self._labels[idx].code)
+        if self._labels:
+            return int(self._labels[0].code)
+        return 1
+
+    @staticmethod
+    def _robust_zscore2(img: np.ndarray) -> np.ndarray:
+        x = np.asarray(img, dtype=np.float64)
+        med = float(np.median(x))
+        mad = float(np.median(np.abs(x - med)))
+        scale = max(1.4826 * mad, 1e-8)
+        return (x - med) / scale
+
     def _kmeans_fit(self, x: np.ndarray, k: int, max_iter: int = 25) -> np.ndarray:
         n = x.shape[0]
         if n == 0:
@@ -1227,6 +1311,67 @@ class MainWindow(QMainWindow):
         self._dirty = True
         self.statusBar().showMessage(
             f"类聚完成：code={code}，新增 {add_count} px（簇: {sorted(target_clusters_set)}）"
+        )
+
+    def _run_rpca_generate_mask(self) -> None:
+        if self._raw_ref is None or self._raw_aligned is None:
+            QMessageBox.information(self, "RPCA", "需要同时加载 reference 与 aligned 才能执行 RPCA。")
+            return
+        ref = np.asarray(self._raw_ref, dtype=np.float64)
+        ali = np.asarray(self._raw_aligned, dtype=np.float64)
+        if ref.shape != ali.shape:
+            QMessageBox.warning(self, "RPCA", "reference 与 aligned 尺寸不一致，无法执行 RPCA。")
+            return
+
+        cur = self._canvas.get_mask()
+        if cur is None:
+            cur = np.zeros(ref.shape, dtype=np.int32)
+        if cur.shape != ref.shape:
+            QMessageBox.warning(self, "RPCA", "当前 mask 与图像尺寸不一致，无法写入 RPCA 结果。")
+            return
+
+        params = self._get_rpca_params()
+        self._save_rpca_cfg()
+        lam = float(params["lambda"])
+        max_iter = int(params["max_iter"])
+        tol = float(params["tol"])
+        sigma = float(params["sigma"])
+        bg_only = bool(params["bg_only"])
+        code = self._current_selected_code()
+
+        # 用鲁棒标准化降低亮度尺度差异，再做 RPCA 分离低秩背景与稀疏变化。
+        ref_n = self._robust_zscore2(ref)
+        ali_n = self._robust_zscore2(ali)
+        d = np.stack([ref_n.reshape(-1), ali_n.reshape(-1)], axis=0)
+        _, s, iters, err = robust_pca_inexact_alm(d, lam=lam, max_iter=max_iter, tol=tol)
+
+        score = np.abs(s[0] - s[1]).reshape(ref.shape)
+        med = float(np.median(score))
+        mad = float(np.median(np.abs(score - med)))
+        robust_std = max(1.4826 * mad, 1e-8)
+        thr = med + sigma * robust_std
+        candidate = score >= thr
+
+        if bg_only:
+            writable = (cur == 0) | (cur == int(code))
+        else:
+            writable = np.ones_like(cur, dtype=bool)
+        write_mask = candidate & writable
+        add_only = write_mask & (cur != int(code))
+        add_count = int(np.count_nonzero(add_only))
+        total_count = int(np.count_nonzero(write_mask))
+        if total_count <= 0:
+            self.statusBar().showMessage("RPCA完成：未检测到可写入变化像素。可尝试降低变化阈值σ。")
+            return
+
+        out = np.asarray(cur, dtype=np.int32).copy()
+        out[write_mask] = int(code)
+        self._set_canvas_mask_programmatically(out)
+        self._canvas.set_custom_overlay_argb(None)
+        self._source_mask = out
+        self._dirty = True
+        self.statusBar().showMessage(
+            f"RPCA完成：code={code}，写入 {total_count} px（新增 {add_count}，iter={iters}，err={err:.2e}，thr={thr:.4f}）"
         )
 
     def _rebuild_label_list(self) -> None:

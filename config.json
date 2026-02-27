@@ -4,5 +4,10 @@
   "last_mask_path": "",
   "last_codebook_path": "D:\\github\\SiameseNetwork_fits_diff\\data\\mask_codebook.json",
   "overlay_alpha": 0.53,
-  "brush_radius": 1
+  "brush_radius": 1,
+  "rpca_lambda": 0.02,
+  "rpca_max_iter": 120,
+  "rpca_tol": 1e-05,
+  "rpca_threshold_sigma": 1.5,
+  "rpca_write_bg_only": true
 }

@@ -7,6 +7,7 @@
 - **读取**：已对齐的 image FITS（16位） + mask FITS（16位整型 label map）
 - **叠加显示**：mask 以半透明彩色覆盖在图像上
 - **编辑**：选择标签（来自 `mask_codebook`），用画笔/橡皮在 mask 上涂抹
+- **RPCA变化提取**：基于 `reference/aligned` 做 RPCA，提取变化区域并写入当前标签
 - **保存**：将修改后的 mask 写回 FITS（保留 16 位整型）
 - **配置数据目录**：默认 `D:\github\SiameseNetwork_fits_diff\data`
 
