@@ -259,24 +259,35 @@ def _asinh_enhance(x: np.ndarray, gain: float = 8.0) -> np.ndarray:
     return np.arcsinh(gain * xn) / np.arcsinh(gain)
 
 
-def process_robust_pipeline(data: np.ndarray, scale: int = 48) -> np.ndarray:
+def process_robust_pipeline(
+    data: np.ndarray,
+    box: int = 48,
+    clip_sigma: float = 3.0,
+    denoise_sigma: float | None = None,
+    mix_alpha: float = 0.7,
+    asinh_gain: float = 8.0,
+) -> np.ndarray:
     """推荐流程：mask + mesh + sigma clip + 轻度去噪 + asinh 对比增强。"""
     img = _fill_nan_with_median(data)
-    box = max(16, int(scale))
-    bg = estimate_background_mesh(img, box=box, clip_sigma=3.0)
+    box = max(16, int(box))
+    bg = estimate_background_mesh(img, box=box, clip_sigma=float(clip_sigma))
     resid = img - bg
 
     # 轻度去噪（高斯）
-    sigma_dn = max(1.0, box / 24.0)
+    if denoise_sigma is None:
+        sigma_dn = max(1.0, box / 24.0)
+    else:
+        sigma_dn = max(0.5, float(denoise_sigma))
     den = np.asarray(
         convolve_fft(resid, Gaussian2DKernel(sigma_dn), normalize_kernel=True, boundary="extend"),
         dtype=np.float64,
     )
     # 保留细节：与原残差按比例融合
-    mix = 0.7 * resid + 0.3 * den
+    a = float(np.clip(mix_alpha, 0.0, 1.0))
+    mix = a * resid + (1.0 - a) * den
 
     # 显示增强（不改变输入文件）
-    enh = _asinh_enhance(mix, gain=8.0)
+    enh = _asinh_enhance(mix, gain=max(0.5, float(asinh_gain)))
     # 映射回近似原量纲，便于 3D 对比（保留正负）
     v = mix[np.isfinite(mix)]
     amp = float(np.percentile(np.abs(v), 99.0)) if v.size else 1.0
@@ -307,6 +318,47 @@ def remove_background(data: np.ndarray, method: str, scale: int) -> np.ndarray:
         bg = estimate_background_rpca(img, rank_keep=rank_keep)
         return img - bg
     if method == BG_METHOD_PIPELINE:
-        return process_robust_pipeline(img, scale=scale)
+        return process_robust_pipeline(img, box=max(16, int(scale)))
+    return img
+
+
+def remove_background_with_params(data: np.ndarray, method: str, params: dict[str, float | int]) -> np.ndarray:
+    img = np.asarray(data, dtype=np.float64)
+    if method == BG_METHOD_ORIGINAL:
+        return img
+    if method == BG_METHOD_MESH:
+        box = int(params.get("box", 48))
+        clip_sigma = float(params.get("clip_sigma", 3.0))
+        return img - estimate_background_mesh(img, box=max(16, box), clip_sigma=clip_sigma)
+    if method == BG_METHOD_MORPH:
+        radius = int(params.get("radius", 24))
+        return img - estimate_background_morphology(img, radius=max(2, radius))
+    if method == BG_METHOD_POLY2:
+        sample_size = int(params.get("sample_size", 60000))
+        clip_sigma = float(params.get("clip_sigma", 3.0))
+        return img - estimate_background_poly2d(
+            img, sample_size=max(5000, sample_size), clip_sigma=max(1.5, clip_sigma)
+        )
+    if method == BG_METHOD_WAVELET:
+        base_sigma = float(params.get("base_sigma", 8.0))
+        levels = int(params.get("levels", 4))
+        return img - estimate_background_wavelet(img, base_sigma=max(2.0, base_sigma), levels=max(2, levels))
+    if method == BG_METHOD_RPCA:
+        rank_keep = int(params.get("rank_keep", 3))
+        return img - estimate_background_rpca(img, rank_keep=max(1, min(10, rank_keep)))
+    if method == BG_METHOD_PIPELINE:
+        box = int(params.get("box", 48))
+        clip_sigma = float(params.get("clip_sigma", 3.0))
+        denoise_sigma = float(params.get("denoise_sigma", max(1.0, box / 24.0)))
+        mix_alpha = float(params.get("mix_alpha", 0.7))
+        asinh_gain = float(params.get("asinh_gain", 8.0))
+        return process_robust_pipeline(
+            img,
+            box=max(16, box),
+            clip_sigma=max(1.5, clip_sigma),
+            denoise_sigma=max(0.5, denoise_sigma),
+            mix_alpha=float(np.clip(mix_alpha, 0.0, 1.0)),
+            asinh_gain=max(0.5, asinh_gain),
+        )
     return img
 

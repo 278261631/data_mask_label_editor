@@ -1,6 +1,19 @@
 {
   "data_dir": "D:\\github\\test_img",
   "patch_size": 50,
-  "bg_method": "robust_pipeline",
-  "bg_scale": 48
+  "bg_method": "original",
+  "bg_scale": 48,
+  "mesh_box": 48,
+  "mesh_clip_sigma": 3.0,
+  "morph_radius": 24,
+  "poly_sample_size": 60000,
+  "poly_clip_sigma": 3.0,
+  "wavelet_base_sigma": 8.0,
+  "wavelet_levels": 4,
+  "rpca_rank_keep": 8,
+  "pipeline_box": 48,
+  "pipeline_clip_sigma": 3.0,
+  "pipeline_denoise_sigma": 2.0,
+  "pipeline_mix_alpha": 0.7,
+  "pipeline_asinh_gain": 8.0
 }
