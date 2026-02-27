@@ -6,8 +6,12 @@ import numpy as np
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QKeySequence, QPixmap, QShortcut, QPainter, QLinearGradient
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
+    QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -16,6 +20,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSlider,
+    QSpinBox,
     QSplitter,
     QStackedWidget,
     QToolBar,
@@ -62,6 +67,7 @@ class MainWindow(QMainWindow):
 
         self._labels: list[Label] = default_labels(alpha=255)
         self._cluster_rng = np.random.default_rng(20260227)
+        self._last_cluster_code: int | None = None
 
         # ---------- 当前模式 ----------
         self._mode = "view3d"  # "view3d" | "edit_mask"
@@ -108,6 +114,39 @@ class MainWindow(QMainWindow):
         self._alpha_slider.setValue(int(cfg.overlay_alpha * 100))
         self._alpha_slider.valueChanged.connect(self._on_alpha_changed)
         self._alpha_label = QLabel(f"透明度: {int(cfg.overlay_alpha * 100)}%")
+
+        # ---------- Cluster params ----------
+        self._cluster_k_spin = QSpinBox()
+        self._cluster_k_spin.setRange(2, 16)
+        self._cluster_k_spin.setValue(5)
+        self._cluster_sample_spin = QSpinBox()
+        self._cluster_sample_spin.setRange(1000, 2000000)
+        self._cluster_sample_spin.setSingleStep(1000)
+        self._cluster_sample_spin.setValue(20000)
+        self._cluster_iter_spin = QSpinBox()
+        self._cluster_iter_spin.setRange(5, 200)
+        self._cluster_iter_spin.setValue(20)
+        self._cluster_seed_min_spin = QSpinBox()
+        self._cluster_seed_min_spin.setRange(5, 50000)
+        self._cluster_seed_min_spin.setValue(20)
+        self._cluster_radius_spin = QSpinBox()
+        self._cluster_radius_spin.setRange(0, 7)
+        self._cluster_radius_spin.setValue(1)
+        self._cluster_precision_spin = QDoubleSpinBox()
+        self._cluster_precision_spin.setRange(0.0, 1.0)
+        self._cluster_precision_spin.setDecimals(3)
+        self._cluster_precision_spin.setSingleStep(0.01)
+        self._cluster_precision_spin.setValue(0.12)
+        self._cluster_recall_spin = QDoubleSpinBox()
+        self._cluster_recall_spin.setRange(0.0, 1.0)
+        self._cluster_recall_spin.setDecimals(3)
+        self._cluster_recall_spin.setSingleStep(0.01)
+        self._cluster_recall_spin.setValue(0.08)
+        self._cluster_write_bg_only = QCheckBox("只写入背景(0)+当前类")
+        self._cluster_write_bg_only.setChecked(True)
+        self._cluster_rerun_btn = QPushButton("重跑上次类聚")
+        self._cluster_rerun_btn.setEnabled(False)
+        self._cluster_rerun_btn.clicked.connect(self._rerun_last_cluster)
 
         # ---------- Prob overlay mode ----------
         self._prob_mode_label = QLabel("叠加:")
@@ -280,6 +319,24 @@ class MainWindow(QMainWindow):
         side_layout.addSpacing(6)
         side_layout.addWidget(self._alpha_label)
         side_layout.addWidget(self._alpha_slider)
+
+        side_layout.addSpacing(6)
+        cluster_box = QGroupBox("类聚参数")
+        cluster_form = QFormLayout(cluster_box)
+        cluster_form.setContentsMargins(8, 6, 8, 6)
+        cluster_form.setHorizontalSpacing(8)
+        cluster_form.setVerticalSpacing(4)
+        cluster_form.addRow("簇数 k", self._cluster_k_spin)
+        cluster_form.addRow("采样上限", self._cluster_sample_spin)
+        cluster_form.addRow("迭代次数", self._cluster_iter_spin)
+        cluster_form.addRow("最小种子", self._cluster_seed_min_spin)
+        cluster_form.addRow("局部半径", self._cluster_radius_spin)
+        cluster_form.addRow("精度阈值", self._cluster_precision_spin)
+        cluster_form.addRow("召回阈值", self._cluster_recall_spin)
+        cluster_form.addRow("", self._cluster_write_bg_only)
+        cluster_form.addRow("", self._cluster_rerun_btn)
+        side_layout.addWidget(cluster_box)
+
         side_layout.addSpacing(6)
         side_layout.addWidget(self._prob_legend_title)
         side_layout.addWidget(self._prob_legend_bar)
@@ -296,6 +353,8 @@ class MainWindow(QMainWindow):
             "  E=橡皮  F=适应窗口\n"
             "  M=切换模式\n"
             "  标签行内[类聚]=扩展当前类\n"
+            "  调参数后可点[重跑上次类聚]\n"
+            "  参数在右侧[类聚参数]\n"
             "  1-9=选择标签  0=背景\n"
             "  PgUp/PgDn=上/下一张"
         )
@@ -949,7 +1008,17 @@ class MainWindow(QMainWindow):
     def _on_cluster_for_label(self, code: int) -> None:
         if self._mode != "edit_mask":
             self._switch_mode("edit_mask")
+        self._last_cluster_code = int(code)
+        self._cluster_rerun_btn.setEnabled(True)
         self._run_kmeans_expand_for_code(code)
+
+    def _rerun_last_cluster(self) -> None:
+        if self._last_cluster_code is None:
+            self.statusBar().showMessage("还没有可重跑的类聚记录。")
+            return
+        if self._mode != "edit_mask":
+            self._switch_mode("edit_mask")
+        self._run_kmeans_expand_for_code(int(self._last_cluster_code))
 
     @staticmethod
     def _box_mean(img: np.ndarray, radius: int = 1) -> np.ndarray:
@@ -973,7 +1042,7 @@ class MainWindow(QMainWindow):
         var = np.maximum(mu2 - mu * mu, 1e-8)
         return mu.astype(np.float32, copy=False), np.sqrt(var, dtype=np.float32)
 
-    def _build_cluster_features(self) -> np.ndarray | None:
+    def _build_cluster_features(self, stat_radius: int) -> np.ndarray | None:
         if self._raw_ref is None or self._raw_aligned is None:
             return None
         ref = np.asarray(self._raw_ref, dtype=np.float32)
@@ -982,14 +1051,35 @@ class MainWindow(QMainWindow):
             return None
         diff = ref - ali
         adiff = np.abs(diff)
-        ref_mu, ref_std = self._local_mean_std(ref, radius=1)
-        ali_mu, ali_std = self._local_mean_std(ali, radius=1)
-        ad_mu = self._box_mean(adiff, radius=1)
+        r = max(0, int(stat_radius))
+        ref_mu, ref_std = self._local_mean_std(ref, radius=r)
+        ali_mu, ali_std = self._local_mean_std(ali, radius=r)
+        ad_mu = self._box_mean(adiff, radius=r)
         feat = np.stack(
             [ref, ali, diff, adiff, ref_mu, ref_std, ali_mu, ali_std, ad_mu],
             axis=-1,
         )
         return feat.astype(np.float32, copy=False)
+
+    def _get_cluster_params(self) -> dict[str, float | int | bool]:
+        k = int(self._cluster_k_spin.value())
+        sample_n = int(self._cluster_sample_spin.value())
+        max_iter = int(self._cluster_iter_spin.value())
+        min_seed = int(self._cluster_seed_min_spin.value())
+        stat_radius = int(self._cluster_radius_spin.value())
+        p_th = float(self._cluster_precision_spin.value())
+        r_th = float(self._cluster_recall_spin.value())
+        bg_only = bool(self._cluster_write_bg_only.isChecked())
+        return {
+            "k": max(2, k),
+            "sample_n": max(1, sample_n),
+            "max_iter": max(1, max_iter),
+            "min_seed": max(1, min_seed),
+            "stat_radius": max(0, stat_radius),
+            "precision_th": min(max(p_th, 0.0), 1.0),
+            "recall_th": min(max(r_th, 0.0), 1.0),
+            "bg_only": bg_only,
+        }
 
     def _kmeans_fit(self, x: np.ndarray, k: int, max_iter: int = 25) -> np.ndarray:
         n = x.shape[0]
@@ -1026,6 +1116,16 @@ class MainWindow(QMainWindow):
         return out
 
     def _run_kmeans_expand_for_code(self, code: int) -> None:
+        p = self._get_cluster_params()
+        k = int(p["k"])
+        sample_n_cfg = int(p["sample_n"])
+        max_iter = int(p["max_iter"])
+        min_seed = int(p["min_seed"])
+        stat_radius = int(p["stat_radius"])
+        precision_th = float(p["precision_th"])
+        recall_th = float(p["recall_th"])
+        bg_only = bool(p["bg_only"])
+
         cur = self._canvas.get_mask()
         if cur is None:
             QMessageBox.information(self, "类聚", "当前没有可操作的 mask。")
@@ -1039,11 +1139,15 @@ class MainWindow(QMainWindow):
 
         seed = cur == int(code)
         seed_count = int(np.count_nonzero(seed))
-        if seed_count < 20:
-            QMessageBox.information(self, "类聚", f"标签 code={code} 的已标注像素太少（{seed_count}），至少需要 20。")
+        if seed_count < min_seed:
+            QMessageBox.information(
+                self,
+                "类聚",
+                f"标签 code={code} 的已标注像素太少（{seed_count}），至少需要 {min_seed}。",
+            )
             return
 
-        feat = self._build_cluster_features()
+        feat = self._build_cluster_features(stat_radius=stat_radius)
         if feat is None:
             QMessageBox.warning(self, "类聚", "无法构建类聚特征。")
             return
@@ -1056,12 +1160,13 @@ class MainWindow(QMainWindow):
         x_all = (x_all - x_mean) / x_std
 
         n = x_all.shape[0]
-        sample_n = min(20000, n)
+        sample_n = min(sample_n_cfg, n)
+        if sample_n < k:
+            sample_n = k
         sample_idx = self._cluster_rng.choice(n, size=sample_n, replace=False)
         x_sample = x_all[sample_idx]
 
-        k = 5
-        centers = self._kmeans_fit(x_sample, k=k, max_iter=20)
+        centers = self._kmeans_fit(x_sample, k=k, max_iter=max_iter)
         labels_all = self._assign_to_centers(x_all, centers=centers).reshape(h, w)
         seed_labels = labels_all[seed]
         seed_hist = np.bincount(seed_labels, minlength=k)
@@ -1075,12 +1180,15 @@ class MainWindow(QMainWindow):
         for ci in range(k):
             if ci == best:
                 continue
-            if cluster_precision[ci] >= 0.12 and cluster_recall[ci] >= 0.08:
+            if cluster_precision[ci] >= precision_th and cluster_recall[ci] >= recall_th:
                 target_clusters.append(ci)
         target_clusters_set = set(target_clusters)
 
         candidate = np.isin(labels_all, list(target_clusters_set))
-        writable = (cur == 0) | (cur == int(code))
+        if bg_only:
+            writable = (cur == 0) | (cur == int(code))
+        else:
+            writable = np.ones_like(cur, dtype=bool)
         new_hits = candidate & writable
         add_only = new_hits & (cur != int(code))
         add_count = int(np.count_nonzero(add_only))
