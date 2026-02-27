@@ -1,13 +1,13 @@
-## FITS Mask Label Editor
+## FITS 3D Viewer
 
-一个用于 **显示与编辑 FITS mask label** 的桌面程序（类似 labelme 的“画笔涂抹式”标注体验）。
+一个用于浏览 FITS 图像并查看局部 3D 像素曲面的桌面程序。
 
-### 功能（当前实现目标）
+### 功能
 
-- **读取**：已对齐的 image FITS（16位） + mask FITS（16位整型 label map）
-- **叠加显示**：mask 以半透明彩色覆盖在图像上
-- **编辑**：选择标签（来自 `mask_codebook`），用画笔/橡皮在 mask 上涂抹
-- **保存**：将修改后的 mask 写回 FITS（保留 16 位整型）
+- **读取**：reference FITS（必需）与 aligned FITS（可选）
+- **2D 浏览**：缩放、平移、reference/aligned 切换
+- **3D 查看**：点击 2D 图像任意位置，显示该点附近局部区域的 3D surface
+- **区域控制**：可调 3D 局部区域大小
 - **配置数据目录**：默认 `D:\github\SiameseNetwork_fits_diff\data`
 
 ### 安装
@@ -24,23 +24,10 @@ pip install -r requirements.txt
 python -m fits_3d_viewer
 ```
 
-### 数据与 codebook 约定（尽量兼容）
+### 数据命名约定
 
-`mask_codebook` 建议使用 JSON（最稳）：
+程序会在数据目录中自动发现 FITS 主图，并尝试匹配：
 
-```json
-{
-  "labels": [
-    { "code": 0, "name": "background", "color": "#000000" },
-    { "code": 1, "name": "class1", "color": "#ff0000" }
-  ]
-}
-```
-
-也支持 CSV（列名任意，但需包含 code/name/color 或 r/g/b）：
-
-- `code,name,color`
-- `code,name,r,g,b`
-
-若你目前的 `mask_codebook` 是 FITS（二进制表格 HDU），也会尝试自动识别常见列名。
+- `xxx_1_reference.fits`（reference）
+- `xxx_2_aligned.fits`（aligned，可选）
 

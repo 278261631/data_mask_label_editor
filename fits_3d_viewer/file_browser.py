@@ -17,14 +17,12 @@ from PySide6.QtWidgets import (
 
 @dataclass
 class TileGroup:
-    """表示一组对齐的 tile 文件：reference、aligned、mask。"""
+    """表示一组对齐的 tile 文件：reference、aligned。"""
 
     tile_id: str  # e.g. "tile0001"
     reference: Path | None = None
     aligned: Path | None = None
-    mask: Path | None = None
     pred_png: Path | None = None
-    pred_mask: Path | None = None
     display_name: str = ""
     predict_display: str = "-"
     data_kind: str = "data"
@@ -34,16 +32,8 @@ class TileGroup:
         return self.reference is not None and self.aligned is not None
 
     @property
-    def has_mask(self) -> bool:
-        return self.mask is not None
-
-    @property
     def has_pred_png(self) -> bool:
         return self.pred_png is not None
-
-    @property
-    def has_pred_mask(self) -> bool:
-        return self.pred_mask is not None
 
     @property
     def is_predict(self) -> bool:
@@ -60,8 +50,6 @@ def discover_tiles(data_dir: str | Path) -> list[TileGroup]:
         search_dirs.append(tiles_dir)
 
     fit_exts = (".fits", ".fit", ".fts")
-    image_exts = (".fits", ".fit", ".fts", ".png", ".bmp", ".tif", ".tiff")
-
     def _find_existing(candidates: list[Path]) -> Path | None:
         for p in candidates:
             if p.exists() and p.is_file():
@@ -80,8 +68,8 @@ def discover_tiles(data_dir: str | Path) -> list[TileGroup]:
             if not name_lower.endswith(fit_exts):
                 continue
 
-            # 列表只显示图像 FITS，避免把 mask 文件本身作为主图条目
-            if "_mask" in name_lower or "_prob" in name_lower:
+            # 列表只显示图像 FITS，避免把概率派生文件本身作为主图条目
+            if "_prob" in name_lower:
                 continue
 
             stem = f.stem
@@ -92,17 +80,11 @@ def discover_tiles(data_dir: str | Path) -> list[TileGroup]:
                 ali_candidates = [f.with_name(f"{prefix}_2_aligned{ext}") for ext in fit_exts]
                 g.aligned = _find_existing(ali_candidates)
 
-            mask_candidates = [f.with_name(f"{prefix}_mask{ext}") for ext in image_exts]
-            g.mask = _find_existing(mask_candidates)
-
             g.pred_png = _find_existing([f.with_name(f"{prefix}_pred.png")])
 
             status_parts = ["F"]
             if g.aligned:
                 status_parts.append("A")
-            if g.mask:
-                status_parts.append("M")
-
             pred_parts = []
             if g.pred_png:
                 pred_parts.append("pred.png")
@@ -167,9 +149,6 @@ class FileBrowser(QWidget):
         self._list.clear()
         for g in self._tiles:
             item = QListWidgetItem(g.display_name)
-            # 颜色标记：有 mask 的绿色，没有的灰色
-            if g.has_mask:
-                item.setForeground(Qt.GlobalColor.darkGreen)
             self._list.addItem(item)
         self._list.blockSignals(False)
         self._current_idx = -1
